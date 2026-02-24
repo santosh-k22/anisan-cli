@@ -1,0 +1,21 @@
+# Binaries
+anisan
+anisan.exe
+check_*
+client_*
+test_*
+*.test
+*.out
+*.log
+
+# Dependencies
+vendor/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Editor specific
+.idea/
+.vscode/
+*.iml

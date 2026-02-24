@@ -1,0 +1,49 @@
+// Package version provides unified mechanisms for application version tracking, update discovery, and compatibility validation.
+package version
+
+import (
+	"fmt"
+	"strings"
+
+	"github.com/samber/lo"
+)
+
+// Compare performs a semantic comparison between two version strings.
+// Returns 1 if a > b, -1 if a < b, and 0 if equal.
+func Compare(a, b string) (int, error) {
+	type version struct {
+		major, minor, patch int
+	}
+
+	parse := func(s string) (version, error) {
+		var v version
+		_, err := fmt.Sscanf(strings.TrimPrefix(s, "v"), "%d.%d.%d", &v.major, &v.minor, &v.patch)
+		return v, err
+	}
+
+	av, err := parse(a)
+	if err != nil {
+		return 0, err
+	}
+
+	bv, err := parse(b)
+	if err != nil {
+		return 0, err
+	}
+
+	for _, pair := range []lo.Tuple2[int, int]{
+		{A: av.major, B: bv.major},
+		{A: av.minor, B: bv.minor},
+		{A: av.patch, B: bv.patch},
+	} {
+		if pair.A > pair.B {
+			return 1, nil
+		}
+
+		if pair.A < pair.B {
+			return -1, nil
+		}
+	}
+
+	return 0, nil
+}
