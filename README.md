@@ -28,7 +28,7 @@ AniSan is a modular, performant CLI for **browsing, streaming, and tracking anim
 |---|---|
 | 🔌 **Lua-Powered Scrapers** | Easily extensible sources (AllAnime ships by default). |
 | 🎬 **MPV Integration** | Background IPC control, auto-resume, visual chapter markers, and HTTP header support. |
-| 📡 **Tracking Sync** | Two-way sync with **Anilist** and **MyAnimeList** featuring an offline sync queue. |
+| 📡 **Tracking Sync** | Two-way sync with **Anilist** and **MyAnimeList** featuring an internal offline persistence queue for both backends. |
 | ⚡ **7-Day Caching** | Instantaneous TUI loading powered by a native Go metadata cache. |
 | ⏩ **Auto-Skip Intro** | Integration with [AniSkip](https://api.aniskip.com) to skip OP/ED. |
 | 🛡️ **Bypass** | HTTP/2 + uTLS fingerprinting to bypass Cloudflare. |
@@ -94,10 +94,26 @@ anisan config get player.aniskip
 # Set a value
 anisan config set -k player.aniskip -v false
 
+# Change Tracker Backend (anilist or mal)
+anisan config set -k tracker.backend -v mal
+
 # Reset a value to default
 anisan config reset -k player.aniskip
 ```
 *Tip: Run `anisan config get` without any keys to view your entire active configuration tree.*
+
+## 🔗 Syncing with MyAnimeList & AniList
+AniSan natively supports background episode synchronization to both MyAnimeList and AniList.
+You can configure your preferred primary tracker using the `tracker.backend` configuration key (defaults to `anilist`).
+
+To authenticate the trackers, use the built-in oauth agents:
+```bash
+# Authorize AniList
+anisan anilist auth
+
+# Authorize MyAnimeList
+anisan mal auth
+```
 
 ### Key Configuration Options
 

@@ -2,17 +2,21 @@
 package source
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/anisan-cli/anisan/anilist"
 	"github.com/anisan-cli/anisan/filesystem"
+	"github.com/anisan-cli/anisan/internal/tracker/jikan"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/log"
+	"github.com/anisan-cli/anisan/mal"
 	"github.com/anisan-cli/anisan/util"
 	"github.com/anisan-cli/anisan/where"
 	"github.com/samber/lo"
@@ -138,6 +142,46 @@ func (a *Anime) PopulateMetadata(progress func(string)) error {
 		return nil
 	}
 	a.populated = true
+
+	if viper.GetString(key.TrackerBackend) == "mal" {
+		progress("Fetching metadata from MAL/Jikan")
+		log.Infof("Populating metadata from MAL/Jikan for %s", a.Name)
+
+		// Metadata Resolution: Fall back to AniList if the authenticated MAL pipeline
+		// fails to resolve a valid media entry.
+		if _, err := mal.LoadToken(); err != nil {
+			log.Warn("MAL token not found; falling back to AniList for metadata")
+		} else {
+			res, err := mal.SearchAnime(a.Name)
+			if err != nil || len(res) == 0 {
+				progress("Failed to fetch MAL metadata")
+				return fmt.Errorf("anime '%s' not found on MAL", a.Name)
+			}
+
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			jikanData, err := jikan.FetchMetadata(ctx, res[0].ID)
+			if err != nil {
+				progress("Failed to fetch Jikan metadata")
+				return fmt.Errorf("failed to fetch Jikan metadata: %w", err)
+			}
+
+			a.Metadata.Title = jikanData.EnglishTitle
+			if a.Metadata.Title == "" {
+				a.Metadata.Title = a.Name
+			}
+			// Normalize high-precision MAL decimal scores (1.0-10.0) to the internal integer range (0-100).
+			a.Metadata.Score = int(jikanData.Score * 10)
+			a.Metadata.Status = jikanData.Status
+			a.Metadata.Episodes = jikanData.TotalEpisodes
+			if jikanData.Year > 0 {
+				a.Metadata.StartDate = Date{Year: jikanData.Year, Month: 1, Day: 1}
+			}
+
+			return nil
+		}
+	}
 
 	progress("Fetching metadata from anilist")
 	log.Infof("Populating metadata for %s", a.Name)

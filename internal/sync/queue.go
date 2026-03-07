@@ -4,6 +4,7 @@ package sync
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"math/rand"
 	"net/http"
 	"os"
@@ -11,11 +12,13 @@ import (
 	"time"
 
 	"github.com/anisan-cli/anisan/anilist"
+	"github.com/zalando/go-keyring"
 )
 
 // SyncMutation encapsulates a single tracking operation for deferred synchronization.
 type SyncMutation struct {
 	Timestamp int64  `json:"timestamp"`
+	Backend   string `json:"backend"` // Indicates the target synchronization service ("anilist" or "mal")
 	MediaID   int    `json:"media_id"`
 	Action    string `json:"action"`
 	Payload   string `json:"payload"`
@@ -32,7 +35,7 @@ func getSyncFile() string {
 }
 
 // QueueFailure persists a failed tracking operation to a local JSON-log for deferred reconciliation.
-func QueueFailure(mediaID int, action, payload string) error {
+func QueueFailure(backend string, mediaID int, action, payload string) error {
 	f, err := os.OpenFile(getSyncFile(), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		return err
@@ -41,6 +44,7 @@ func QueueFailure(mediaID int, action, payload string) error {
 
 	mutation := SyncMutation{
 		Timestamp: time.Now().Unix(),
+		Backend:   backend,
 		MediaID:   mediaID,
 		Action:    action,
 		Payload:   payload,
@@ -86,18 +90,40 @@ func ReconcileFailures() {
 			backoff := time.Duration((1<<i)*100)*time.Millisecond + time.Duration(rand.Intn(100))*time.Millisecond
 			time.Sleep(backoff)
 
-			req, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBufferString(m.Payload))
-			if err != nil {
-				continue
-			}
+			var req *http.Request
+			var err error
 
-			// Use the stored authentication token if available.
-			token, err := anilist.GetToken()
-			if err == nil && token != "" {
-				req.Header.Set("Authorization", "Bearer "+token)
+			switch m.Backend {
+			case "mal":
+				// Reconstitute the authenticated PATCH request for MyAnimeList.
+				targetURL := fmt.Sprintf("https://api.myanimelist.net/v2/anime/%d/my_list_status", m.MediaID)
+				req, err = http.NewRequest(http.MethodPatch, targetURL, bytes.NewBufferString(m.Payload))
+				if err != nil {
+					continue
+				}
+
+				// Keyring extraction mimics the primary client's cryptographic credential retrieval.
+				if token, kErr := keyring.Get("anisan", "mal-token"); kErr == nil && token != "" {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				req.Header.Set("Accept", "application/json")
+
+			case "anilist":
+				fallthrough
+			default:
+				// Default to AniList GraphQL mutation routing
+				req, err = http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBufferString(m.Payload))
+				if err != nil {
+					continue
+				}
+
+				if token, aErr := anilist.GetToken(); aErr == nil && token != "" {
+					req.Header.Set("Authorization", "Bearer "+token)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept", "application/json")
 			}
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Accept", "application/json")
 
 			resp, err := client.Do(req)
 			if err == nil {

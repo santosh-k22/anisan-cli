@@ -84,7 +84,7 @@ func (t *listItem) Description() (description string) {
 	case *source.Anime:
 		var parts []string
 
-		// Add Status (FINISHED, RELEASING)
+		// Status Indicator (e.g., FINISHED, RELEASING)
 		if e.Metadata.Status != "" {
 			var c lipgloss.Color
 			if e.Metadata.Status == "RELEASING" {
@@ -92,6 +92,7 @@ func (t *listItem) Description() (description string) {
 			} else {
 				c = style.Subtext
 			}
+			// Title-case formatting for visual consistency in the list view.
 			statusStr := strings.ToLower(e.Metadata.Status)
 			if len(statusStr) > 0 {
 				statusStr = strings.ToUpper(statusStr[:1]) + statusStr[1:]
@@ -99,17 +100,22 @@ func (t *listItem) Description() (description string) {
 			parts = append(parts, lipgloss.NewStyle().Foreground(c).Render(statusStr))
 		}
 
-		// Add Rating (Score)
+		// Dynamic Rating: Render the media score according to the active backend's numeric scale.
+		// MyAnimeList utilizes a 1.0-10.0 decimal scale, whereas AniList employs a 0-100 percentage range.
 		if e.Metadata.Score > 0 {
-			parts = append(parts, lipgloss.NewStyle().Foreground(style.AccentColor).Render(fmt.Sprintf("★ %d%%", e.Metadata.Score)))
+			if viper.GetString(key.TrackerBackend) == "mal" {
+				parts = append(parts, lipgloss.NewStyle().Foreground(style.AccentColor).Render(fmt.Sprintf("★ %.1f", float64(e.Metadata.Score)/10.0)))
+			} else {
+				parts = append(parts, lipgloss.NewStyle().Foreground(style.AccentColor).Render(fmt.Sprintf("★ %d%%", e.Metadata.Score)))
+			}
 		}
 
-		// Add Year
+		// Release Year
 		if e.Metadata.StartDate.Year > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(style.FaintColor).Render(fmt.Sprintf("%d", e.Metadata.StartDate.Year)))
 		}
 
-		// Add Episode Count
+		// Total Episode Count
 		if e.Metadata.Episodes > 0 {
 			parts = append(parts, lipgloss.NewStyle().Foreground(style.FaintColor).Render(fmt.Sprintf("%d eps", e.Metadata.Episodes)))
 		}

@@ -2,7 +2,7 @@
 package key
 
 // DefinedFieldsCount represents the total cardinality of the application configuration schema.
-const DefinedFieldsCount = 22
+const DefinedFieldsCount = 23
 
 // Provider Source Identifiers - these keys manage the registration and selection of scraping providers.
 const (
@@ -42,6 +42,11 @@ const (
 	AnilistSecret            = "anilist.secret"
 	AnilistCode              = "anilist.code"
 	AnilistLinkOnAnimeSelect = "anilist.link_on_anime_select"
+)
+
+// Synchronization Registry - these keys determine the active media tracking and metadata backends.
+const (
+	TrackerBackend = "tracker.backend"
 )
 
 // Terminal User Interface (TUI) - these keys define the primary interactive environment's styling and logic.

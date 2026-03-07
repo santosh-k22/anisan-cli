@@ -2,6 +2,7 @@
 package tui
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -13,6 +14,7 @@ import (
 	"github.com/anisan-cli/anisan/aniskip"
 	"github.com/anisan-cli/anisan/color"
 	"github.com/anisan-cli/anisan/history"
+	"github.com/anisan-cli/anisan/internal/tracker"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/log"
 	"github.com/anisan-cli/anisan/mal"
@@ -344,9 +346,6 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 			return nil
 		}
 
-		anilistSynced := false
-		malSynced := false
-
 		var maxPercentage float64
 
 		// Technical Note: AniSkip and IPC monitoring are exclusive to the MPV player implementation.
@@ -358,6 +357,28 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 			}
 
 			b.mpvPlayer.StopIPCTicker()
+
+			// Instantiate the resolved tracking backend.
+			activeTracker := tracker.InitializeTracker()
+			// Resolve the canonical media identifier for the active tracking backend.
+			var trackerMediaID = anilistID
+			if viper.GetString(key.TrackerBackend) == "mal" {
+				trackerMediaID = malID
+			}
+
+			if trackerMediaID != 0 {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+
+				// Launch the decoupled IPC watcher to monitor playback progress asynchronously.
+				watcher := player.NewMPVWatcher(mpvPlayer.Socket(), activeTracker, trackerMediaID, int(episode.Index))
+				go func() {
+					if err := watcher.Poll(ctx); err != nil && err != context.Canceled {
+						log.Warnf("IPC watcher terminated: %v", err)
+					}
+				}()
+			}
+
 			b.mpvPlayer.StartIPCTicker(func(pos, dur int) {
 				if dur > 0 {
 					p := (float64(pos) / float64(dur)) * 100.0
@@ -367,31 +388,9 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 				}
 
 				// Monitor playback position for automated intro/outro skipping.
+
 				if _, err := skipper.Check(float64(pos)); err != nil {
 					log.Warnf("Skipper check failed: %v", err)
-				}
-
-				if dur > 0 && float64(pos) > float64(dur)*0.8 {
-					if !anilistSynced && anilistID != 0 {
-						anilistSynced = true
-						go func() {
-							log.Infof("Syncing progress to Anilist (ID: %d)", anilistID)
-							_ = anilist.UpdateMediaListEntry(anilistID, int(episode.Index), anilist.MediaListStatusCurrent)
-						}()
-					}
-
-					if !malSynced && malID != 0 {
-						if _, err := mal.LoadToken(); err == nil {
-							malSynced = true
-							go func() {
-								log.Infof("Syncing progress to MAL (ID: %d)", malID)
-								_, err := mal.UpdateMyListStatus(malID, int(episode.Index), "watching")
-								if err != nil {
-									log.Errorf("MAL sync failed: %v", err)
-								}
-							}()
-						}
-					}
 				}
 			})
 		} else {

@@ -110,6 +110,7 @@ func init() {
 	register(key.AnilistID, "", "Anilist ID to use for authentication")
 	register(key.AnilistSecret, "", "Anilist secret to use for authentication")
 	register(key.AnilistLinkOnAnimeSelect, true, "Show link to Anilist on anime select")
+	register(key.TrackerBackend, "anilist", "Active media synchronization backend (supported: 'anilist', 'mal')")
 	register(key.TUIItemSpacing, 1, "Spacing between items in the TUI")
 	register(key.TUIReadOnEnter, true, "Play episode on enter if other episodes aren't selected")
 	register(key.TUISearchPromptString, "> ", "Search prompt string to use")
