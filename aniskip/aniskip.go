@@ -42,6 +42,12 @@ type apiResponse struct {
 // GetSkipTimes retrieves the skip intervals for a specific media entry and episode number from the AniSkip service.
 // Returns nil (not an error) if no skip times are available.
 func GetSkipTimes(malID int, episode int) (*SkipTimes, error) {
+	// Short-circuit network requests if the media ID cannot be resolved.
+	if malID == 0 {
+		log.Warnf("aniskip bypassed: invalid or unresolved MAL ID (0)")
+		return nil, nil
+	}
+
 	url := fmt.Sprintf("%s/%d/%d?types=op&types=ed", baseURL, malID, episode)
 
 	resp, err := http.Get(url)

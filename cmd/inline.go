@@ -15,6 +15,7 @@ import (
 	"github.com/anisan-cli/anisan/filesystem"
 	"github.com/anisan-cli/anisan/inline"
 	"github.com/anisan-cli/anisan/key"
+	"github.com/anisan-cli/anisan/mal"
 	"github.com/anisan-cli/anisan/provider"
 	"github.com/anisan-cli/anisan/query"
 	"github.com/anisan-cli/anisan/source"
@@ -35,8 +36,9 @@ func init() {
 	inlineCmd.Flags().BoolP("json", "j", false, "Format the command output as a JSON object")
 	inlineCmd.Flags().BoolP("fetch-metadata", "f", false, "Fetch and include detailed anime metadata in the output")
 	inlineCmd.Flags().BoolP("include-anilist-anime", "A", false, "Include Anilist record data in the structured output")
+	inlineCmd.Flags().BoolP("include-mal-anime", "M", false, "Include MAL record data in the structured output")
 	inlineCmd.Flags().BoolP("include-videos", "V", false, "Execute provider scraping to include video stream URLs for selected episodes")
-	lo.Must0(viper.BindPFlag(key.MetadataFetchAnilist, inlineCmd.Flags().Lookup("fetch-metadata")))
+	lo.Must0(viper.BindPFlag(key.TrackerFetchMetadata, inlineCmd.Flags().Lookup("fetch-metadata")))
 
 	inlineCmd.Flags().StringP("output", "o", "", "Specify a file path to write the command output")
 
@@ -128,6 +130,7 @@ When using the json flag anime selector could be omitted. That way, it will sele
 			Json:                lo.Must(cmd.Flags().GetBool("json")),
 			Query:               query,
 			IncludeAnilistAnime: lo.Must(cmd.Flags().GetBool("include-anilist-anime")),
+			IncludeMalAnime:     lo.Must(cmd.Flags().GetBool("include-mal-anime")),
 			AnimePicker:         animePicker,
 			EpisodesFilter:      episodesFilter,
 			Out:                 writer,
@@ -149,18 +152,28 @@ var inlineAnilistCmd = &cobra.Command{
 }
 
 func init() {
-	inlineAnilistCmd.AddCommand(inlineAnilistSearchCmd)
-
-	inlineAnilistSearchCmd.Flags().StringP("name", "n", "", "The anime title to search for on Anilist")
-	inlineAnilistSearchCmd.Flags().IntP("id", "i", 0, "The specific Anilist ID to retrieve metadata for")
-
-	inlineAnilistSearchCmd.MarkFlagsMutuallyExclusive("name", "id")
+	inlineCmd.AddCommand(inlineTrackerCmd)
 }
 
-// inlineAnilistSearchCmd performs an Anilist search by anime title.
-var inlineAnilistSearchCmd = &cobra.Command{
+// inlineTrackerCmd manages remote tracker record operations in inline mode.
+var inlineTrackerCmd = &cobra.Command{
+	Use:   "tracker",
+	Short: "Manage remote media tracker operations in inline mode",
+}
+
+func init() {
+	inlineTrackerCmd.AddCommand(inlineTrackerSearchCmd)
+
+	inlineTrackerSearchCmd.Flags().StringP("name", "n", "", "The anime title to search on the active tracker")
+	inlineTrackerSearchCmd.Flags().IntP("id", "i", 0, "The specific tracker record ID to retrieve metadata for")
+
+	inlineTrackerSearchCmd.MarkFlagsMutuallyExclusive("name", "id")
+}
+
+// inlineTrackerSearchCmd performs an API search via the active tracking backend.
+var inlineTrackerSearchCmd = &cobra.Command{
 	Use:   "search",
-	Short: "Perform an Anilist search by anime title and return the results",
+	Short: "Perform a search via the active tracker by anime title and return the results",
 	PreRun: func(cmd *cobra.Command, args []string) {
 		if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("id") {
 			handleErr(errors.New("name or id flag is required"))
@@ -171,15 +184,28 @@ var inlineAnilistSearchCmd = &cobra.Command{
 		animeId := lo.Must(cmd.Flags().GetInt("id"))
 
 		var toEncode any
+		backend := viper.GetString(key.TrackerBackend)
 
 		if animeName != "" {
-			animes, err := anilist.SearchByName(animeName)
-			handleErr(err)
-			toEncode = animes
+			if backend == "mal" {
+				animes, err := mal.SearchAnime(animeName)
+				handleErr(err)
+				toEncode = animes
+			} else {
+				animes, err := anilist.SearchByName(animeName)
+				handleErr(err)
+				toEncode = animes
+			}
 		} else {
-			anime, err := anilist.GetByID(animeId)
-			handleErr(err)
-			toEncode = anime
+			if backend == "mal" {
+				anime, err := mal.GetByID(animeId)
+				handleErr(err)
+				toEncode = anime
+			} else {
+				anime, err := anilist.GetByID(animeId)
+				handleErr(err)
+				toEncode = anime
+			}
 		}
 
 		handleErr(json.NewEncoder(os.Stdout).Encode(toEncode))
@@ -187,57 +213,75 @@ var inlineAnilistSearchCmd = &cobra.Command{
 }
 
 func init() {
-	inlineAnilistCmd.AddCommand(inlineAnilistGetCmd)
+	inlineTrackerCmd.AddCommand(inlineTrackerGetCmd)
 
-	inlineAnilistGetCmd.Flags().StringP("name", "n", "", "The local anime name to retrieve the mapped Anilist relation for")
-	lo.Must0(inlineAnilistGetCmd.MarkFlagRequired("name"))
+	inlineTrackerGetCmd.Flags().StringP("name", "n", "", "The local anime name to retrieve the mapped relation for")
+	lo.Must0(inlineTrackerGetCmd.MarkFlagRequired("name"))
 }
 
-// inlineAnilistGetCmd retrieves mapped Anilist relations for local anime titles.
-var inlineAnilistGetCmd = &cobra.Command{
+// inlineTrackerGetCmd retrieves mapped relations for local anime titles.
+var inlineTrackerGetCmd = &cobra.Command{
 	Use:   "get",
-	Short: "Retrieve the Anilist record currently associated with a specific local anime title",
+	Short: "Retrieve the tracker record currently associated with a specific local anime title",
 	Run: func(cmd *cobra.Command, args []string) {
-		var (
-			a   *anilist.Anime
-			err error
-		)
-
+		var toEncode any
 		name := lo.Must(cmd.Flags().GetString("name"))
-		a, err = anilist.FindClosest(name)
+		backend := viper.GetString(key.TrackerBackend)
 
-		if err != nil {
-			a, err = anilist.FindClosest(name)
-			handleErr(err)
+		if backend == "mal" {
+			var a *mal.Anime
+			a = mal.GetCachedRelation(name)
+			if a == nil {
+				animes, err := mal.SearchAnime(name)
+				handleErr(err)
+				if len(animes) > 0 {
+					a = &animes[0]
+				}
+			}
+			toEncode = a
+		} else {
+			var a *anilist.Anime
+			a, err := anilist.FindClosest(name)
+			if err != nil {
+				handleErr(err)
+			}
+			toEncode = a
 		}
 
-		handleErr(json.NewEncoder(os.Stdout).Encode(a))
+		handleErr(json.NewEncoder(os.Stdout).Encode(toEncode))
 	},
 }
 
 func init() {
-	inlineAnilistCmd.AddCommand(inlineAnilistBindCmd)
+	inlineTrackerCmd.AddCommand(inlineTrackerBindCmd)
 
-	inlineAnilistBindCmd.Flags().StringP("name", "n", "", "The local anime title to establish a mapping for")
-	inlineAnilistBindCmd.Flags().IntP("id", "i", 0, "The Anilist ID to bind to the specified anime title")
+	inlineTrackerBindCmd.Flags().StringP("name", "n", "", "The local anime title to establish a mapping for")
+	inlineTrackerBindCmd.Flags().IntP("id", "i", 0, "The remote Tracker ID to bind to the specified anime title")
 
-	lo.Must0(inlineAnilistBindCmd.MarkFlagRequired("name"))
-	lo.Must0(inlineAnilistBindCmd.MarkFlagRequired("id"))
+	lo.Must0(inlineTrackerBindCmd.MarkFlagRequired("name"))
+	lo.Must0(inlineTrackerBindCmd.MarkFlagRequired("id"))
 
-	inlineAnilistBindCmd.MarkFlagsRequiredTogether("name", "id")
+	inlineTrackerBindCmd.MarkFlagsRequiredTogether("name", "id")
 }
 
-// inlineAnilistBindCmd statically binds local anime titles to Anilist record IDs.
-var inlineAnilistBindCmd = &cobra.Command{
+// inlineTrackerBindCmd statically binds local anime titles to active tracker IDs.
+var inlineTrackerBindCmd = &cobra.Command{
 	Use:   "set",
-	Short: "Statically bind a local anime title to a specific Anilist record ID",
+	Short: "Statically bind a local anime title to a specific remote tracker ID",
 	Run: func(cmd *cobra.Command, args []string) {
-		anilistAnime, err := anilist.GetByID(lo.Must(cmd.Flags().GetInt("id")))
-		handleErr(err)
-
+		backend := viper.GetString(key.TrackerBackend)
 		animeName := lo.Must(cmd.Flags().GetString("name"))
+		searchId := lo.Must(cmd.Flags().GetInt("id"))
 
-		handleErr(anilist.SetRelation(animeName, anilistAnime))
+		if backend == "mal" {
+			malAnime, err := mal.GetByID(searchId)
+			handleErr(err)
+			handleErr(mal.SetRelation(animeName, malAnime))
+		} else {
+			anilistAnime, err := anilist.GetByID(searchId)
+			handleErr(err)
+			handleErr(anilist.SetRelation(animeName, anilistAnime))
+		}
 	},
 }
 
@@ -245,6 +289,7 @@ func init() {
 	inlineCmd.AddCommand(inlineSchemaCmd)
 
 	inlineSchemaCmd.Flags().BoolP("anilist", "a", false, "Generate the JSON Schema for Anilist search result objects")
+	inlineSchemaCmd.Flags().BoolP("mal", "m", false, "Generate the JSON Schema for MAL search result objects")
 }
 
 // inlineSchemaCmd generates JSON schemas for structured inline mode outputs.
@@ -269,10 +314,117 @@ var inlineSchemaCmd = &cobra.Command{
 		switch {
 		case lo.Must(cmd.Flags().GetBool("anilist")):
 			schema = reflector.Reflect([]*anilist.Anime{})
+		case lo.Must(cmd.Flags().GetBool("mal")):
+			schema = reflector.Reflect([]*mal.Anime{})
 		default:
 			schema = reflector.Reflect(&inline.Output{})
 		}
 
 		handleErr(json.NewEncoder(os.Stdout).Encode(schema))
+	},
+}
+
+func init() {
+	inlineCmd.AddCommand(inlineMalCmd)
+}
+
+// inlineMalCmd manages MAL record operations in inline mode.
+var inlineMalCmd = &cobra.Command{
+	Use:   "mal",
+	Short: "Manage MAL record operations in inline mode",
+}
+
+func init() {
+	inlineMalCmd.AddCommand(inlineMalSearchCmd)
+
+	inlineMalSearchCmd.Flags().StringP("name", "n", "", "The anime title to search for on MAL")
+	inlineMalSearchCmd.Flags().IntP("id", "i", 0, "The specific MAL ID to retrieve metadata for")
+
+	inlineMalSearchCmd.MarkFlagsMutuallyExclusive("name", "id")
+}
+
+// inlineMalSearchCmd performs a MAL search by anime title.
+var inlineMalSearchCmd = &cobra.Command{
+	Use:   "search",
+	Short: "Perform a MAL search by anime title and return the results",
+	PreRun: func(cmd *cobra.Command, args []string) {
+		if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("id") {
+			handleErr(errors.New("name or id flag is required"))
+		}
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		animeName := lo.Must(cmd.Flags().GetString("name"))
+		animeId := lo.Must(cmd.Flags().GetInt("id"))
+
+		var toEncode any
+
+		if animeName != "" {
+			animes, err := mal.SearchAnime(animeName)
+			handleErr(err)
+			toEncode = animes
+		} else {
+			anime, err := mal.GetByID(animeId)
+			handleErr(err)
+			toEncode = anime
+		}
+
+		handleErr(json.NewEncoder(os.Stdout).Encode(toEncode))
+	},
+}
+
+func init() {
+	inlineMalCmd.AddCommand(inlineMalGetCmd)
+
+	inlineMalGetCmd.Flags().StringP("name", "n", "", "The local anime name to retrieve the mapped MAL relation for")
+	lo.Must0(inlineMalGetCmd.MarkFlagRequired("name"))
+}
+
+// inlineMalGetCmd retrieves mapped MAL relations for local anime titles.
+var inlineMalGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Retrieve the MAL record currently associated with a specific local anime title",
+	Run: func(cmd *cobra.Command, args []string) {
+		var (
+			a *mal.Anime
+		)
+
+		name := lo.Must(cmd.Flags().GetString("name"))
+		a = mal.GetCachedRelation(name)
+
+		if a == nil {
+			animes, err := mal.SearchAnime(name)
+			handleErr(err)
+			if len(animes) > 0 {
+				a = &animes[0]
+			}
+		}
+
+		handleErr(json.NewEncoder(os.Stdout).Encode(a))
+	},
+}
+
+func init() {
+	inlineMalCmd.AddCommand(inlineMalBindCmd)
+
+	inlineMalBindCmd.Flags().StringP("name", "n", "", "The local anime title to establish a mapping for")
+	inlineMalBindCmd.Flags().IntP("id", "i", 0, "The MAL ID to bind to the specified anime title")
+
+	lo.Must0(inlineMalBindCmd.MarkFlagRequired("name"))
+	lo.Must0(inlineMalBindCmd.MarkFlagRequired("id"))
+
+	inlineMalBindCmd.MarkFlagsRequiredTogether("name", "id")
+}
+
+// inlineMalBindCmd statically binds local anime titles to MAL record IDs.
+var inlineMalBindCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Statically bind a local anime title to a specific MAL record ID",
+	Run: func(cmd *cobra.Command, args []string) {
+		malAnime, err := mal.GetByID(lo.Must(cmd.Flags().GetInt("id")))
+		handleErr(err)
+
+		animeName := lo.Must(cmd.Flags().GetString("name"))
+
+		handleErr(mal.SetRelation(animeName, malAnime))
 	},
 }

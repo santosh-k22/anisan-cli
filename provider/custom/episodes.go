@@ -2,8 +2,6 @@
 package custom
 
 import (
-	"strconv"
-
 	"github.com/anisan-cli/anisan/constant"
 	"github.com/anisan-cli/anisan/internal/cache"
 	"github.com/anisan-cli/anisan/source"
@@ -27,7 +25,8 @@ func (s *luaSource) EpisodesOf(anime *source.Anime) ([]*source.Episode, error) {
 	}
 
 	table := val.(*lua.LTable)
-	var episodes []*source.Episode
+	// Pre-allocate slice capacity to ensure zero-allocation growth during iteration.
+	episodes := make([]*source.Episode, 0, table.Len())
 	var errs []error
 
 	table.ForEach(func(k, v lua.LValue) {
@@ -35,13 +34,10 @@ func (s *luaSource) EpisodesOf(anime *source.Anime) ([]*source.Episode, error) {
 			return
 		}
 
-		idx, err := strconv.ParseUint(k.String(), 10, 16)
-		if err != nil {
-			errs = append(errs, err)
-			return
-		}
+		// Direct primitive cast to bypass intermediate string serialization.
+		idx := uint16(k.(lua.LNumber))
 
-		ep, err := episodeFromTable(v.(*lua.LTable), anime, uint16(idx))
+		ep, err := episodeFromTable(v.(*lua.LTable), anime, idx)
 		if err != nil {
 			errs = append(errs, err)
 			return

@@ -11,8 +11,7 @@ const (
 	searchState
 	animesState
 	episodesState
-	anilistSelectState
-	malSelectState
+	trackerSelectState
 	confirmState
 	readState
 	postWatchState

@@ -46,7 +46,7 @@ func NewClient() *Client {
 
 // UpdateEpisodeProgress executes an authenticated PATCH request to synchronize
 // the media progress state for the specified entry.
-func (c *Client) UpdateEpisodeProgress(ctx context.Context, id int, episode int) error {
+func (c *Client) UpdateEpisodeProgress(ctx context.Context, id int, episode int, totalEpisodes int) error {
 	// Credentials are retrieved securely from the operating system's keyring service,
 	// eliminating the risks associated with plaintext token storage.
 	token, err := keyring.Get(serviceName, accountName)
@@ -60,6 +60,14 @@ func (c *Client) UpdateEpisodeProgress(ctx context.Context, id int, episode int)
 	// the MyAnimeList v2 API documentation.
 	formData := url.Values{}
 	formData.Set("num_watched_episodes", strconv.Itoa(episode))
+
+	// Dynamically handle completion state if metadata provides a total episode count.
+	if totalEpisodes > 0 && episode >= totalEpisodes {
+		formData.Set("status", "completed")
+	} else {
+		formData.Set("status", "watching")
+	}
+
 	encodedData := formData.Encode()
 
 	// Formulate the HTTP request using the provided context to respect timeouts
@@ -94,5 +102,14 @@ func (c *Client) UpdateEpisodeProgress(ctx context.Context, id int, episode int)
 	// Drain the response body on success to ensure Keep-Alive functions correctly
 	_, _ = io.Copy(io.Discard, resp.Body)
 
+	return nil
+}
+
+// CheckAuth preemptively checks for the MAL token in the secure keyring.
+func (c *Client) CheckAuth(ctx context.Context) error {
+	_, err := keyring.Get(serviceName, accountName)
+	if err != nil {
+		return fmt.Errorf("MAL authentication missing. Please run 'anisan mal auth'")
+	}
 	return nil
 }

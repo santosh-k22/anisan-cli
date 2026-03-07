@@ -2,8 +2,6 @@
 package custom
 
 import (
-	"strconv"
-
 	"github.com/anisan-cli/anisan/constant"
 	"github.com/anisan-cli/anisan/source"
 	lua "github.com/yuin/gopher-lua"
@@ -18,7 +16,8 @@ func (s *luaSource) VideosOf(episode *source.Episode) ([]*source.Video, error) {
 	}
 
 	table := val.(*lua.LTable)
-	var videos []*source.Video
+	// Pre-allocate slice capacity to reduce memory pressure during extraction.
+	videos := make([]*source.Video, 0, table.Len())
 	var errs []error
 
 	table.ForEach(func(k, v lua.LValue) {
@@ -26,13 +25,10 @@ func (s *luaSource) VideosOf(episode *source.Episode) ([]*source.Video, error) {
 			return
 		}
 
-		idx, err := strconv.ParseUint(k.String(), 10, 16)
-		if err != nil {
-			errs = append(errs, err)
-			return
-		}
+		// Direct primitive cast.
+		idx := uint16(k.(lua.LNumber))
 
-		vid, err := videoFromTable(v.(*lua.LTable), uint16(idx))
+		vid, err := videoFromTable(v.(*lua.LTable), idx)
 		if err != nil {
 			errs = append(errs, err)
 			return

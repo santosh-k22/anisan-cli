@@ -78,33 +78,51 @@ func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
 		})
 	}
 
-	// Asynchronously hydrate history entries with remote metadata.
+	// Asynchronously hydrate history entries with remote metadata via unified tracker.
 	go func(historyEntries []*history.SavedEpisode) {
 		// Group by name to avoid duplicate fetches
 		nameMap := make(map[string][]*history.SavedEpisode)
 		for _, e := range historyEntries {
 			nameMap[e.AnimeName] = append(nameMap[e.AnimeName], e)
 		}
-
+		backend := viper.GetString("tracker.backend")
 		for name, eps := range nameMap {
-			// Find closest Anilist match
-			al, err := anilist.FindClosest(name)
-			if err == nil && al != nil {
-				// Convert Anilist to Metadata
-				meta := &source.Metadata{
-					Title:    al.Name(),
-					Status:   al.Status,
-					Score:    al.AverageScore,
-					Episodes: al.Episodes,
-				}
-				if al.StartDate.Year != 0 {
-					meta.StartDate = source.Date{
-						Year:  al.StartDate.Year,
-						Month: al.StartDate.Month,
-						Day:   al.StartDate.Day,
+			var meta *source.Metadata
+			if backend == "mal" {
+				// Find closest MAL match and convert to generalized Metadata
+				if res, err := mal.SearchAnime(name); err == nil && len(res) > 0 {
+					m := res[0]
+					meta = &source.Metadata{
+						Title:    m.Title,
+						Status:   m.Status, // Requires mapping MAL status strings if they differ
+						Episodes: m.NumEpisodes,
+					}
+					// MAL Mean is typically out of 10.0, normalize to 100 if your UI expects it
+					if m.Mean > 0 {
+						meta.Score = int(m.Mean * 10)
 					}
 				}
-
+			} else {
+				// Find closest Anilist match
+				al, err := anilist.FindClosest(name)
+				if err == nil && al != nil {
+					// Convert Anilist to generalized Metadata
+					meta = &source.Metadata{
+						Title:    al.Name(),
+						Status:   al.Status,
+						Score:    al.AverageScore,
+						Episodes: al.Episodes,
+					}
+					if al.StartDate.Year != 0 {
+						meta.StartDate = source.Date{
+							Year:  al.StartDate.Year,
+							Month: al.StartDate.Month,
+							Day:   al.StartDate.Day,
+						}
+					}
+				}
+			}
+			if meta != nil {
 				for _, ep := range eps {
 					ep.Metadata = meta
 				}
@@ -283,36 +301,37 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 			skipTimes *aniskip.SkipTimes
 			anilistID int
 			malID     int
+			totalEps  int
 		)
-
-		if alAnime, err := anilist.FindClosest(episode.Anime.Name); err == nil {
-			anilistID = alAnime.ID
-			malID = alAnime.IDMal
-		}
-
-		if malID == 0 {
-			if _, err := mal.LoadToken(); err == nil {
-				log.Info("Searching MAL for " + episode.Anime.Name)
-				if res, err := mal.SearchAnime(episode.Anime.Name); err == nil && len(res) > 0 {
-					malID = res[0].ID
-				}
+		backend := viper.GetString("tracker.backend")
+		// Rapid Cache Resolution to prevent UI blocking
+		if backend == "mal" {
+			if m := mal.GetCachedRelation(episode.Anime.Name); m != nil {
+				malID = m.ID
+				totalEps = m.NumEpisodes
+			} else if res, err := mal.FindClosest(episode.Anime.Name); err == nil {
+				malID = res.ID
+				totalEps = res.NumEpisodes
+			}
+		} else {
+			if al, err := anilist.FindClosest(episode.Anime.Name); err == nil {
+				anilistID = al.ID
+				malID = al.IDMal
+				totalEps = al.Episodes
 			}
 		}
-
+		// Aniskip execution (strictly requires MAL ID)
 		if viper.GetBool(key.Aniskip) {
-			if malID != 0 {
-				log.Infof("Fetching skip times for MAL ID %d Episode %d", malID, episode.Index)
-				skipTimes, _ = aniskip.GetSkipTimes(malID, int(episode.Index))
+			resolvedMalID := b.resolveMalID(episode.Anime.Name)
+			if resolvedMalID != 0 {
+				log.Infof("Fetching skip times for MAL ID %d Episode %d", resolvedMalID, episode.Index)
+				skipTimes, _ = aniskip.GetSkipTimes(resolvedMalID, int(episode.Index))
 				if skipTimes != nil {
 					log.Infof("Skip times found: Intro %v-%v, Outro %v-%v", skipTimes.Opening.Start, skipTimes.Opening.End, skipTimes.Ending.Start, skipTimes.Ending.End)
-				} else {
-					log.Warn("No skip times found.")
 				}
 			} else {
 				log.Warn("MAL ID not found, skipping intro skip fetch.")
 			}
-		} else {
-			log.Info("Aniskip disabled in config.")
 		}
 
 		if b.mpvPlayer == nil {
@@ -376,7 +395,7 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 				defer cancel()
 
 				// Launch the decoupled IPC watcher to monitor playback progress asynchronously.
-				watcher := player.NewMPVWatcher(mpvPlayer.Socket(), activeTracker, trackerMediaID, int(episode.Index))
+				watcher := player.NewMPVWatcher(mpvPlayer.Socket(), activeTracker, trackerMediaID, int(episode.Index), totalEps)
 				go func() {
 					if err := watcher.Poll(ctx); err != nil && err != context.Canceled {
 						log.Warnf("IPC watcher terminated: %v", err)
@@ -432,27 +451,37 @@ func (b *statefulBubble) waitForMpvExit(maxPercentage *float64) tea.Cmd {
 	}
 }
 
-func (b *statefulBubble) fetchAndSetAnilist(anime *source.Anime) tea.Cmd {
+// fetchAndSetTracker dynamically links either MAL or AniList in the background based on viper config.
+func (b *statefulBubble) fetchAndSetTracker(anime *source.Anime) tea.Cmd {
 	return func() tea.Msg {
-		// Sanitize series name by removing the episode count suffix.
 		cleanName := anime.Name
 		if idx := strings.LastIndex(cleanName, "("); idx != -1 {
 			cleanName = strings.TrimSpace(cleanName[:idx])
 		}
 
+		backend := viper.GetString("tracker.backend")
+
+		if backend == "mal" {
+			res, err := mal.SearchAnime(cleanName)
+			if err == nil && len(res) > 0 {
+				_ = mal.SetRelation(anime.Name, &res[0])
+				b.closestTrackerAnimeChannel <- &res[0]
+			}
+			return nil
+		}
+
 		alAnime, err := anilist.FindClosest(cleanName)
-		if err != nil {
-			log.Warn(err)
-		} else {
-			b.closestAnilistAnimeChannel <- alAnime
+		if err == nil {
+			b.closestTrackerAnimeChannel <- alAnime
 		}
 		return nil
 	}
 }
 
-func (b *statefulBubble) waitForAnilistFetchAndSet() tea.Cmd {
+// waitForTrackerFetchAndSet unifies the channel listener.
+func (b *statefulBubble) waitForTrackerFetchAndSet() tea.Cmd {
 	return func() tea.Msg {
-		return <-b.closestAnilistAnimeChannel
+		return <-b.closestTrackerAnimeChannel
 	}
 }
 
@@ -467,6 +496,24 @@ func (b *statefulBubble) tryLoadAnilistCache(anime *source.Anime) tea.Cmd {
 		if alAnime := anilist.GetCachedRelation(cleanName); alAnime != nil {
 			return alAnime
 		}
+		return nil
+	}
+}
+
+// tryLoadMALCache retrieves locally persisted relation mappings for MyAnimeList.
+func (b *statefulBubble) tryLoadMALCache(anime *source.Anime) tea.Cmd {
+	return func() tea.Msg {
+		// Enforce the same string normalization utilized in manual linking
+		cleanName := anime.Name
+		if idx := strings.LastIndex(cleanName, "("); idx != -1 {
+			cleanName = strings.TrimSpace(cleanName[:idx])
+		}
+
+		cached := mal.GetCachedRelation(cleanName)
+		if cached != nil {
+			return cached // Yields *mal.Anime to the update loop
+		}
+
 		return nil
 	}
 }
@@ -487,7 +534,7 @@ func (b *statefulBubble) fetchAnilist(anime *source.Anime) tea.Cmd {
 			b.errorChannel <- err
 		} else {
 			log.Infof("found %s", util.Quantify(len(animes), "anime", "animes"))
-			b.fetchedAnilistAnimesChannel <- animes
+			b.fetchedTrackerAnimesChannel <- animes
 		}
 		return nil
 	}
@@ -496,7 +543,7 @@ func (b *statefulBubble) fetchAnilist(anime *source.Anime) tea.Cmd {
 func (b *statefulBubble) waitForAnilist() tea.Cmd {
 	return func() tea.Msg {
 		select {
-		case found := <-b.fetchedAnilistAnimesChannel:
+		case found := <-b.fetchedTrackerAnimesChannel:
 			return found
 		case err := <-b.errorChannel:
 			b.lastError = err
@@ -521,7 +568,7 @@ func (b *statefulBubble) fetchMALAnime(query string) tea.Cmd {
 			b.errorChannel <- err
 		} else {
 			log.Infof("found %d MAL entries", len(animes))
-			b.fetchedMALAnimesChannel <- animes
+			b.fetchedTrackerAnimesChannel <- animes
 		}
 		return nil
 	}
@@ -530,7 +577,7 @@ func (b *statefulBubble) fetchMALAnime(query string) tea.Cmd {
 func (b *statefulBubble) waitForMALAnime() tea.Cmd {
 	return func() tea.Msg {
 		select {
-		case found := <-b.fetchedMALAnimesChannel:
+		case found := <-b.fetchedTrackerAnimesChannel:
 			return found
 		case err := <-b.errorChannel:
 			b.lastError = err

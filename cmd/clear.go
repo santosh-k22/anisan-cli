@@ -26,6 +26,7 @@ var clearTargets = []clearTarget{
 	{"cache directory", "cache", mo.Some("c"), where.Cache},
 	{"history file", "history", mo.Some("s"), where.History},
 	{"anilist binds", "anilist", mo.Some("a"), where.AnilistBinds},
+	{"mal binds", "mal", mo.Some("m"), where.MalBinds}, // Ensure where.MalBinds exists in the where package
 	{"queries history", "queries", mo.Some("q"), where.Queries},
 }
 

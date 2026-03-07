@@ -5,11 +5,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/anisan-cli/anisan/anilist"
 	"github.com/anisan-cli/anisan/constant"
 	"github.com/anisan-cli/anisan/internal/ui/render"
 	"github.com/anisan-cli/anisan/key"
-	"github.com/anisan-cli/anisan/mal"
 	"github.com/anisan-cli/anisan/player"
 	"github.com/anisan-cli/anisan/provider"
 	"github.com/anisan-cli/anisan/source"
@@ -44,8 +42,7 @@ type statefulBubble struct {
 	sourcesC   list.Model
 	animesC    list.Model
 	episodesC  list.Model
-	anilistC   list.Model
-	malListC   list.Model
+	trackerC   list.Model
 	postWatchC list.Model
 	progressC  progress.Model
 	helpC      help.Model
@@ -59,10 +56,8 @@ type statefulBubble struct {
 	sourcesLoadedChannel        chan []source.Source
 	foundAnimesChannel          chan []*source.Anime
 	foundEpisodesChannel        chan []*source.Episode
-	fetchedAnilistAnimesChannel chan []*anilist.Anime
-	fetchedMALAnimesChannel     chan []mal.Anime
-	fetchedMALUserListChannel   chan []mal.UserListEntry
-	closestAnilistAnimeChannel  chan *anilist.Anime
+	fetchedTrackerAnimesChannel chan any // Transports []mal.Anime or []*anilist.Anime
+	closestTrackerAnimeChannel  chan any // Transports *mal.Anime or *anilist.Anime
 	episodeReadChannel          chan struct{}
 	errorChannel                chan error
 
@@ -71,7 +66,8 @@ type statefulBubble struct {
 	currentPlayingEpisode *source.Episode
 	nextEpisodeToPlay     *source.Episode // Queued episode for seamless transitions
 	mpvPlayer             player.Player
-	anilistAnime          *anilist.Anime // Store linked anime
+	trackerName           string // Store linked anime name
+	trackerURL            string // Store linked anime url
 	lastError             error
 
 	width, height    int
@@ -105,7 +101,7 @@ func (b *statefulBubble) newState(s state) {
 	if !lo.Contains([]state{
 		loadingState,
 		readState,
-		anilistSelectState,
+		trackerSelectState,
 	}, b.state) {
 		b.statesHistory.Push(b.state)
 	}
@@ -144,11 +140,8 @@ func (b *statefulBubble) resize(width, height int) {
 	b.episodesC.SetSize(listWidth, listHeight)
 	b.episodesC.Help.Width = listWidth
 
-	b.anilistC.SetSize(listWidth, listHeight)
-	b.anilistC.Help.Width = listWidth
-
-	b.malListC.SetSize(listWidth, listHeight)
-	b.malListC.Help.Width = listWidth
+	b.trackerC.SetSize(listWidth, listHeight)
+	b.trackerC.Help.Width = listWidth
 
 	b.postWatchC.SetSize(listWidth, listHeight)
 	b.postWatchC.Help.Width = listWidth
@@ -165,7 +158,7 @@ func (b *statefulBubble) resize(width, height int) {
 func (b *statefulBubble) startLoading() tea.Cmd {
 	b.loading = true
 	b.busy = true
-	return tea.Batch(b.animesC.StartSpinner(), b.episodesC.StartSpinner(), b.malListC.StartSpinner())
+	return tea.Batch(b.animesC.StartSpinner(), b.episodesC.StartSpinner(), b.trackerC.StartSpinner())
 }
 
 // stopLoading exits the loading state and synchronizes child component visual indicators.
@@ -174,7 +167,7 @@ func (b *statefulBubble) stopLoading() tea.Cmd {
 	b.busy = false
 	b.animesC.StopSpinner()
 	b.episodesC.StopSpinner()
-	b.malListC.StopSpinner()
+	b.trackerC.StopSpinner()
 	return nil
 }
 
@@ -188,10 +181,8 @@ func newBubble(options *Options) *statefulBubble {
 		sourcesLoadedChannel:        make(chan []source.Source),
 		foundAnimesChannel:          make(chan []*source.Anime),
 		foundEpisodesChannel:        make(chan []*source.Episode),
-		fetchedAnilistAnimesChannel: make(chan []*anilist.Anime),
-		fetchedMALAnimesChannel:     make(chan []mal.Anime),
-		fetchedMALUserListChannel:   make(chan []mal.UserListEntry),
-		closestAnilistAnimeChannel:  make(chan *anilist.Anime),
+		fetchedTrackerAnimesChannel: make(chan any),
+		closestTrackerAnimeChannel:  make(chan any),
 		episodeReadChannel:          make(chan struct{}),
 		errorChannel:                make(chan error),
 
@@ -296,19 +287,12 @@ func newBubble(options *Options) *statefulBubble {
 	})
 	bubble.episodesC.SetStatusBarItemName("episode", "episodes")
 
-	bubble.anilistC = makeList("Anime on Anilist", true, &listOptions{
+	bubble.trackerC = makeList("Tracker Results", true, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.Blue).Padding(0, 1),
 		),
 	})
-	bubble.anilistC.SetStatusBarItemName("anime", "animes")
-
-	bubble.malListC = makeList("MyAnimeList", true, &listOptions{
-		TitleStyle: mo.Some(
-			lipgloss.NewStyle().Foreground(style.Base).Background(style.Blue).Padding(0, 1),
-		),
-	})
-	bubble.malListC.SetStatusBarItemName("anime", "animes")
+	bubble.trackerC.SetStatusBarItemName("anime", "animes")
 
 	bubble.postWatchC = makeList("Post-Watch Menu", false, &listOptions{
 		TitleStyle: mo.Some(

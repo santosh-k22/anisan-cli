@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/anisan-cli/anisan/anilist"
-	"github.com/zalando/go-keyring"
+	"github.com/anisan-cli/anisan/mal"
 )
 
 // SyncMutation encapsulates a single tracking operation for deferred synchronization.
@@ -102,9 +102,9 @@ func ReconcileFailures() {
 					continue
 				}
 
-				// Keyring extraction mimics the primary client's cryptographic credential retrieval.
-				if token, kErr := keyring.Get("anisan", "mal-token"); kErr == nil && token != "" {
-					req.Header.Set("Authorization", "Bearer "+token)
+				// Use mal.LoadToken() to handle potential OAuth token refreshes automatically
+				if token, err := mal.LoadToken(); err == nil && token != nil {
+					req.Header.Set("Authorization", "Bearer "+token.AccessToken)
 				}
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 				req.Header.Set("Accept", "application/json")

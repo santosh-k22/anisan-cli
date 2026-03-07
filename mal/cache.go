@@ -73,7 +73,7 @@ func (c *cacher[K, T]) Delete(key K) error {
 var relationCacher = &cacher[string, int]{
 	internal: gache.New[*cacheData[string, int]](
 		&gache.Options{
-			Path:       filepath.Join(where.Config(), "mal.json"), // Using mal.json in config dir
+			Path:       filepath.Join(where.Cache(), "mal.json"), // Persist title-to-ID mappings to the cache directory
 			FileSystem: &filesystem.GacheFs{},
 		},
 	),

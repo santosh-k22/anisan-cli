@@ -30,6 +30,17 @@ func SetRelation(name string, to *Anime) error {
 	return nil
 }
 
+// GetCachedRelation attempts to retrieve a synced Anime entry directly from the relation cache without searching.
+func GetCachedRelation(name string) *Anime {
+	name = normalizedName(name)
+	if id := relationCacher.Get(name); id.IsPresent() && id.MustGet() != -1 {
+		if anime, ok := idCacher.Get(id.MustGet()).Get(); ok {
+			return anime
+		}
+	}
+	return nil
+}
+
 // FindClosest returns the closest anime to the given name.
 // It will levenshtein compare the given name with all the anime names in the cache.
 func FindClosest(name string) (*Anime, error) {
@@ -40,6 +51,8 @@ func FindClosest(name string) (*Anime, error) {
 // findClosest returns the closest anime to the given name.
 // It will levenshtein compare the given name with all the anime names in the cache.
 func findClosest(name, originalName string, try, limit int) (*Anime, error) {
+	enforceRateLimit()
+
 	if try >= limit {
 		err := fmt.Errorf("no results found on MAL for anime %s", name)
 		log.Error(err)
@@ -77,7 +90,7 @@ func findClosest(name, originalName string, try, limit int) (*Anime, error) {
 			return &found, nil
 		}
 
-		// there should be a anime with the id in the cache, but it wasn't found
+		// there should be an anime with the id in the cache, but it wasn't found
 		// this means that the anime was deleted from mal
 		// remove the id from the cache
 		_ = relationCacher.Delete(name)

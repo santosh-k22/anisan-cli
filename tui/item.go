@@ -31,7 +31,7 @@ func (t *listItem) getMark() string {
 	switch t.internal.(type) {
 	case *source.Episode:
 		return lipgloss.NewStyle().Bold(true).Foreground(style.AccentColor).Render(icon.Get(icon.Mark))
-	case *anilist.Anime:
+	case *anilist.Anime, *mal.Anime: // Unified tracker link icon rendering
 		return icon.Get(icon.Link)
 	case *provider.Provider:
 		return icon.Get(icon.Search)
@@ -59,8 +59,6 @@ func (t *listItem) Title() (title string) {
 		} else {
 			title = e.Name
 		}
-	case *mal.UserListEntry:
-		title = e.Node.Title
 	case *mal.Anime:
 		title = e.Title
 	case string:
@@ -125,7 +123,7 @@ func (t *listItem) Description() (description string) {
 	case *history.SavedEpisode:
 		var parts []string
 
-		// Format pharmacological episode position and total count.
+		// Format chronological episode position and total count.
 		parts = append(parts, fmt.Sprintf("Ep: %d/%d", e.Index, e.AnimeEpisodesTotal))
 
 		// Render media lifecycle status with semantic color coding (Green for Releasing).
@@ -189,10 +187,8 @@ func (t *listItem) Description() (description string) {
 		description = sb.String()
 	case *anilist.Anime:
 		description = e.SiteURL
-	case *mal.UserListEntry:
-		description = fmt.Sprintf("Score: %d • Watched: %d", e.ListStatus.Score, e.ListStatus.NumWatchedEpisodes)
 	case *mal.Anime:
-		description = fmt.Sprintf("ID: %d", e.ID)
+		description = fmt.Sprintf("https://myanimelist.net/anime/%d", e.ID)
 	case string:
 		description = ""
 	}
@@ -222,8 +218,6 @@ func (t *listItem) FilterValue() string {
 		return e.Name()
 	case *provider.Provider:
 		return e.Name
-	case *mal.UserListEntry:
-		return e.Node.Title
 	case *mal.Anime:
 		return e.Title
 	case string:

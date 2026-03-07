@@ -22,6 +22,7 @@ type Options struct {
 	Out                 io.Writer
 	Sources             []source.Source
 	IncludeAnilistAnime bool
+	IncludeMalAnime     bool
 	Json                bool
 	Query               string
 	AnimePicker         mo.Option[AnimePicker]

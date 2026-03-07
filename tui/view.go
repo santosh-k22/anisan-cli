@@ -34,10 +34,8 @@ func (b *statefulBubble) View() string {
 		output = b.viewAnimes()
 	case episodesState:
 		output = b.viewEpisodes()
-	case anilistSelectState:
-		output = b.viewAniList()
-	case malSelectState:
-		output = b.viewMALList()
+	case trackerSelectState:
+		output = b.viewTrackerList()
 	case readState:
 		output = b.viewRead()
 	case postWatchState:
@@ -107,12 +105,8 @@ func (b *statefulBubble) viewEpisodes() string {
 	return episodesView
 }
 
-func (b *statefulBubble) viewAniList() string {
-	return listExtraPaddingStyle.Render(b.anilistC.View())
-}
-
-func (b *statefulBubble) viewMALList() string {
-	return listExtraPaddingStyle.Render(b.malListC.View())
+func (b *statefulBubble) viewTrackerList() string {
+	return listExtraPaddingStyle.Render(b.trackerC.View())
 }
 
 func (b *statefulBubble) viewPostWatch() string {

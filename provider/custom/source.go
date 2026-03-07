@@ -3,6 +3,7 @@ package custom
 
 import (
 	"fmt"
+	"sync"
 
 	lua "github.com/yuin/gopher-lua"
 )
@@ -10,6 +11,7 @@ import (
 type luaSource struct {
 	name  string
 	state *lua.LState
+	mu    sync.Mutex // Protects the non-thread-safe Lua stack from concurrent access
 }
 
 // Name returns the provider name.
@@ -33,6 +35,10 @@ func newLuaSource(name string, state *lua.LState) (*luaSource, error) {
 
 // call executes a global Lua function safely.
 func (s *luaSource) call(fn string, retType lua.LValueType, args ...lua.LValue) (lua.LValue, error) {
+	// Acquire lock to prevent stack corruption from concurrent TUI background updates.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	luaFn := s.state.GetGlobal(fn)
 	if luaFn.Type() != lua.LTFunction {
 		return nil, fmt.Errorf("function %s is not defined", fn)

@@ -84,7 +84,6 @@ var EnvExposed []string
 
 func init() {
 	// Register all defaults.
-	// We no longer panic on count mismatch, trusting the list below.
 	// register validates and adds a new configuration field to the global registry.
 	register := func(k string, v any, desc string) {
 		if _, exists := Default[k]; exists {
@@ -96,7 +95,7 @@ func init() {
 	}
 
 	register(key.DefaultSources, []string{"allanime"}, "Default sources to use.\nWill prompt if not set.\nType \"anisan sources list\" to show available sources")
-	register(key.MetadataFetchAnilist, true, "Fetch metadata from Anilist\nIt will also cache the results to not spam the API")
+	register(key.TrackerFetchMetadata, true, "Fetch metadata from the active tracker\nIt will also cache the results to not spam the API")
 	register(key.MetadataTagRelevanceThreshold, 60, "Minimum relevance of a tag to be included. From 0 to 100")
 	register(key.MiniSearchLimit, 20, "Limit of search results to show")
 	register(key.IconsVariant, "plain", "Icons variant.\nAvailable options are: emoji, kaomoji, plain, squares, nerd (nerd-font required)")
@@ -105,11 +104,11 @@ func init() {
 	register(key.LogsWrite, false, "Write logs")
 	register(key.LogsLevel, "info", "Available options are: (from less to most verbose)\npanic, fatal, error, warn, info, debug, trace")
 	register(key.LogsJson, false, "Use json format for logs")
-	register(key.AnilistEnable, false, "Enable Anilist integration")
-	register(key.AnilistCode, "", "Anilist code to use for authentication")
-	register(key.AnilistID, "", "Anilist ID to use for authentication")
-	register(key.AnilistSecret, "", "Anilist secret to use for authentication")
-	register(key.AnilistLinkOnAnimeSelect, true, "Show link to Anilist on anime select")
+	register(key.TrackerEnable, false, "Enable remote media tracker integration")
+	register(key.TrackerMalClientID, "", "MyAnimeList OAuth Client ID")
+	register(key.TrackerMalToken, "", "MyAnimeList OAuth Token cache")
+	register(key.TrackerAnilistToken, "", "AniList Authentication Token cache")
+	register(key.TrackerAutoLink, true, "Automatically link to the active tracker on anime select")
 	register(key.TrackerBackend, "anilist", "Active media synchronization backend (supported: 'anilist', 'mal')")
 	register(key.TUIItemSpacing, 1, "Spacing between items in the TUI")
 	register(key.TUIReadOnEnter, true, "Play episode on enter if other episodes aren't selected")

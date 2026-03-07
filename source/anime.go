@@ -40,8 +40,9 @@ type Anime struct {
 
 	Episodes []*Episode `json:"episodes"`
 
-	// Anilist integration
+	// Tracker integrations
 	Anilist  mo.Option[*anilist.Anime] `json:"anilist"`
+	Mal      mo.Option[*mal.Anime]     `json:"mal"`
 	Metadata Metadata                  `json:"metadata"`
 
 	cachedTempPath string
@@ -119,19 +120,33 @@ func (a *Anime) GetCover() (string, error) {
 	return "", fmt.Errorf("no cover found")
 }
 
-// BindWithAnilist synchronizes the local anime entity with Anilist service metadata.
-func (a *Anime) BindWithAnilist() error {
-	if a.Anilist.IsPresent() {
+// BindWithTracker synchronizes the local anime entity with the active tracker backend.
+func (a *Anime) BindWithTracker() error {
+	backend := viper.GetString("tracker.backend")
+
+	if backend == "mal" {
+		if a.Mal.IsPresent() {
+			return nil
+		}
+		log.Infof("binding %s with MAL", a.Name)
+		res, err := mal.SearchAnime(a.Name)
+		if err != nil || len(res) == 0 {
+			return fmt.Errorf("anime not found on MAL")
+		}
+		a.Mal = mo.Some(&res[0])
 		return nil
 	}
 
+	// Default to Anilist
+	if a.Anilist.IsPresent() {
+		return nil
+	}
 	log.Infof("binding %s with anilist", a.Name)
 	al, err := anilist.FindClosest(a.Name)
 	if err != nil {
 		log.Error(err)
 		return err
 	}
-
 	a.Anilist = mo.Some(al)
 	return nil
 }
@@ -186,7 +201,7 @@ func (a *Anime) PopulateMetadata(progress func(string)) error {
 	progress("Fetching metadata from anilist")
 	log.Infof("Populating metadata for %s", a.Name)
 
-	if err := a.BindWithAnilist(); err != nil {
+	if err := a.BindWithTracker(); err != nil {
 		progress("Failed to fetch metadata")
 		return err
 	}

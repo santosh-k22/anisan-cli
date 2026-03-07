@@ -20,16 +20,18 @@ type MPVWatcher struct {
 	updateTrigger float64
 	mediaID       int
 	episodeNum    int
+	totalEps      int
 }
 
 // NewMPVWatcher initializes a tracker-aware watcher for a specific media entry.
-func NewMPVWatcher(socket string, t tracker.MediaTracker, mediaID, ep int) *MPVWatcher {
+func NewMPVWatcher(socket string, t tracker.MediaTracker, mediaID, ep, totalEps int) *MPVWatcher {
 	return &MPVWatcher{
 		socketPath:    socket,
 		mediaTracker:  t,
 		updateTrigger: 80.0,
 		mediaID:       mediaID,
 		episodeNum:    ep,
+		totalEps:      totalEps,
 	}
 }
 
@@ -79,7 +81,7 @@ func (w *MPVWatcher) Poll(ctx context.Context) error {
 
 		if event.Event == "property-change" && event.Name == "percent-pos" {
 			if !updateFired && event.Data >= w.updateTrigger {
-				if err := w.mediaTracker.UpdateEpisodeProgress(ctx, w.mediaID, w.episodeNum); err != nil {
+				if err := w.mediaTracker.UpdateEpisodeProgress(ctx, w.mediaID, w.episodeNum, w.totalEps); err != nil {
 					// "sync_queued" is a non-fatal sentinel indicating that the mutation was
 					// offloaded to the persistence queue; it does not signify a failure of the read loop.
 					if err.Error() != "sync_queued" {

@@ -62,6 +62,12 @@ func AnilistBinds() string {
 	return filepath.Join(Config(), "anilist.json")
 }
 
+// MalBinds returns the absolute path to the directory containing cached MyAnimeList relation mappings.
+func MalBinds() string {
+	// Assumes Config() resolves the base configuration directory (e.g., ~/.config/anisan)
+	return filepath.Join(Config(), "mal_binds")
+}
+
 // Queries resolves the absolute path to the localized search query suggestion registry.
 func Queries() string {
 	return filepath.Join(Cache(), "queries.json")

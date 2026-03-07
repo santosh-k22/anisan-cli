@@ -15,8 +15,7 @@ type statefulKeymap struct {
 	quit, forceQuit,
 	selectOne, selectAll, selectVolume, clearSelection,
 	acceptSearchSuggestion,
-	anilistSelect,
-	malSelect,
+	trackerSelect,
 	remove,
 	confirm,
 	openURL,
@@ -81,13 +80,9 @@ func newStatefulKeymap() *statefulKeymap {
 			key.WithKeys("tab"),
 			key.WithHelp("tab", "accept search suggestion"),
 		),
-		anilistSelect: key.NewBinding(
-			key.WithKeys("a"),
-			key.WithHelp("a", "anilist"),
-		),
-		malSelect: key.NewBinding(
-			key.WithKeys("m"),
-			key.WithHelp("m", "select mal anime"),
+		trackerSelect: key.NewBinding(
+			key.WithKeys("t"), // Unified Tracker interaction (link or open in browser).
+			key.WithHelp("t", "link/open tracker"),
 		),
 		back: key.NewBinding(
 			key.WithKeys("esc"),
@@ -178,8 +173,8 @@ func (k *statefulKeymap) help() ([]key.Binding, []key.Binding) {
 	case animesState:
 		return to2(h(k.confirm, k.changeSource, k.back))
 	case episodesState:
-		return h(k.confirm, k.malSelect, k.anilistSelect, k.manualID, k.back), h(k.confirm, k.selectOne, k.selectAll, k.clearSelection, k.openURL, k.selectVolume, k.anilistSelect, k.malSelect, k.back)
-	case anilistSelectState:
+		return h(k.confirm, k.trackerSelect, k.manualID, k.back), h(k.confirm, k.selectOne, k.selectAll, k.clearSelection, k.openURL, k.selectVolume, k.trackerSelect, k.back)
+	case trackerSelectState:
 		return to2(h(k.confirm, k.openURL, k.back))
 	case readState:
 		return to2(h(k.back, k.forceQuit))

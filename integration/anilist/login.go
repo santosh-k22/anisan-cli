@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/anisan-cli/anisan/auth"
+	"github.com/anisan-cli/anisan/anilist"
 	"github.com/anisan-cli/anisan/log"
 	"github.com/anisan-cli/anisan/open"
 )
@@ -200,7 +200,7 @@ func AuthenticateWithBrowser() error {
 	}
 
 	// Save using the existing logic so keychain is preserved
-	if err := auth.SetToken(accessToken); err != nil {
+	if err := anilist.SetToken(accessToken); err != nil {
 		return fmt.Errorf("failed to save token to keyring: %w", err)
 	}
 

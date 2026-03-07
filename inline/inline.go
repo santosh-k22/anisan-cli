@@ -79,16 +79,24 @@ func Run(options *Options) error {
 }
 
 func prepareAnime(anime *source.Anime, options *Options) error {
-	// Anilist binding
-	if options.IncludeAnilistAnime || viper.GetBool(key.MetadataFetchAnilist) {
-		if err := anime.BindWithAnilist(); err != nil {
+	// Resolve agnostic metadata fetch trigger (supporting both unified and legacy keys)
+	fetchMetadata := viper.GetBool("tracker.fetch_metadata") || viper.GetBool(key.TrackerFetchMetadata)
+
+	// Tracker binding
+	if options.IncludeAnilistAnime || options.IncludeMalAnime || fetchMetadata {
+		if options.IncludeMalAnime {
+			viper.Set("tracker.backend", "mal")
+		} else if options.IncludeAnilistAnime {
+			viper.Set("tracker.backend", "anilist")
+		}
+		if err := anime.BindWithTracker(); err != nil {
 			// Don't fail hard on metadata fetch unless critical?
 			// Inline mode usually expects data.
-			log.Warnf("failed to bind anilist for %s: %v", anime.Name, err)
+			log.Warnf("failed to bind tracker for %s: %v", anime.Name, err)
 		}
 	}
 
-	if viper.GetBool(key.MetadataFetchAnilist) {
+	if fetchMetadata {
 		_ = anime.PopulateMetadata(func(string) {})
 	}
 
@@ -126,7 +134,7 @@ func prepareAnime(anime *source.Anime, options *Options) error {
 }
 
 func writeJson(out io.Writer, animes []*source.Anime, options *Options) error {
-	data, err := asJson(animes, options.Query, options.IncludeAnilistAnime)
+	data, err := asJson(animes, options.Query, options.IncludeAnilistAnime, options.IncludeMalAnime)
 	if err != nil {
 		return err
 	}

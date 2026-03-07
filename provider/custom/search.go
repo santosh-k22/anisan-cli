@@ -2,8 +2,6 @@
 package custom
 
 import (
-	"strconv"
-
 	"github.com/anisan-cli/anisan/constant"
 	"github.com/anisan-cli/anisan/internal/cache"
 	"github.com/anisan-cli/anisan/source"
@@ -26,7 +24,8 @@ func (s *luaSource) Search(query string) ([]*source.Anime, error) {
 	}
 
 	table := val.(*lua.LTable)
-	var animes []*source.Anime
+	// Pre-allocate slice capacity based on the Lua table length to minimize reallocations.
+	animes := make([]*source.Anime, 0, table.Len())
 
 	var errs []error
 	table.ForEach(func(k, v lua.LValue) {
@@ -34,13 +33,10 @@ func (s *luaSource) Search(query string) ([]*source.Anime, error) {
 			return // Skip invalid entries
 		}
 
-		idx, err := strconv.ParseUint(k.String(), 10, 16)
-		if err != nil {
-			errs = append(errs, err)
-			return
-		}
+		// Direct primitive cast to avoid unnecessary string allocations.
+		idx := uint16(k.(lua.LNumber))
 
-		anime, err := animeFromTable(v.(*lua.LTable), uint16(idx))
+		anime, err := animeFromTable(v.(*lua.LTable), idx)
 		if err != nil {
 			errs = append(errs, err)
 			return

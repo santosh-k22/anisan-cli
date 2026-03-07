@@ -27,6 +27,9 @@ func Setup() error {
 		viper.MustBindEnv(env)
 	}
 
+	// Setup unified tracking defaults
+	SetupTrackerDefaults()
+
 	// Initialize factory default values.
 	viper.SetTypeByDefaultValue(true)
 	for name, field := range Default {
@@ -41,4 +44,12 @@ func Setup() error {
 	}
 
 	return nil
+}
+
+// SetupTrackerDefaults establishes the unified media tracking configuration.
+// Ensure these replace the legacy 'anilist.enable' and 'anilist.link_on_anime_select' keys.
+func SetupTrackerDefaults() {
+	viper.SetDefault("tracker.backend", "anilist") // Options: "anilist" | "mal" | "none"
+	viper.SetDefault("tracker.enable", false)
+	viper.SetDefault("tracker.auto_link", true)
 }

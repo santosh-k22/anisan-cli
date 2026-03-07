@@ -11,7 +11,7 @@ const (
 
 // Metadata Configuration - these keys govern the retrieval and processing of media metadata.
 const (
-	MetadataFetchAnilist          = "metadata.fetch_anilist"
+	TrackerFetchMetadata          = "tracker.fetch_metadata"
 	MetadataTagRelevanceThreshold = "metadata.tag_relevance_threshold"
 )
 
@@ -35,13 +35,17 @@ const (
 	IconsVariant = "icons.variant"
 )
 
-// Anilist Service Integration - these keys manage the authentication and synchronization with Anilist.
+// Tracker Service Integration - unified keys for media tracking behavior.
 const (
-	AnilistEnable            = "anilist.enable"
-	AnilistID                = "anilist.id"
-	AnilistSecret            = "anilist.secret"
-	AnilistCode              = "anilist.code"
-	AnilistLinkOnAnimeSelect = "anilist.link_on_anime_select"
+	TrackerEnable   = "tracker.enable"
+	TrackerAutoLink = "tracker.auto_link"
+)
+
+// Tracker Authentication - unified token caches.
+const (
+	TrackerMalClientID  = "tracker.mal.client_id"
+	TrackerMalToken     = "tracker.mal.token"
+	TrackerAnilistToken = "tracker.anilist.token"
 )
 
 // Synchronization Registry - these keys determine the active media tracking and metadata backends.

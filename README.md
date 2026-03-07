@@ -69,8 +69,8 @@ Simply run the command to enter the interactive interface:
 anisan
 ```
 
-### Quick CLI Mode (Inline)
-Search and stream without entering the TUI:
+### Quick CLI Mode (Inline or Headless)
+Search, stream, or sync progress without entering the TUI:
 
 ```bash
 # Search and select
@@ -81,6 +81,9 @@ anisan inline -q "Bleach" --source allanime --anime first --episode first
 
 # Continue watching from history
 anisan inline --continue
+
+# Mark an episode as watched headlessly (syncs to configured tracker)
+anisan mark -q "Jujutsu Kaisen" -e 12
 ```
 
 ## ⚙️ Configuration
@@ -116,6 +119,7 @@ anisan anilist auth
 # Authorize MyAnimeList
 anisan mal auth
 ```
+*Note: The interactive TUI will proactively check your authentication status before playback, preventing any silent sync failures in the background.*
 
 ### Key Configuration Options
 

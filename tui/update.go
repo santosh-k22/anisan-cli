@@ -16,7 +16,7 @@ import (
 	"github.com/anisan-cli/anisan/anilist"
 	"github.com/anisan-cli/anisan/color"
 	"github.com/anisan-cli/anisan/history"
-	intAnilist "github.com/anisan-cli/anisan/integration/anilist"
+	"github.com/anisan-cli/anisan/internal/tracker"
 	"github.com/anisan-cli/anisan/internal/ui/render"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/mal"
@@ -79,18 +79,12 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				b.selectedEpisodes = make(map[*source.Episode]struct{})
 				cmd = onListBack(&b.episodesC)
-			case anilistSelectState:
-				if b.anilistC.FilterState() != list.Unfiltered {
-					b.anilistC, cmd = b.anilistC.Update(msg)
+			case trackerSelectState:
+				if b.trackerC.FilterState() != list.Unfiltered {
+					b.trackerC, cmd = b.trackerC.Update(msg)
 					return b, cmd
 				}
-				cmd = onListBack(&b.anilistC)
-			case malSelectState:
-				if b.malListC.FilterState() != list.Unfiltered {
-					b.malListC, cmd = b.malListC.Update(msg)
-					return b, cmd
-				}
-				cmd = onListBack(&b.malListC)
+				cmd = onListBack(&b.trackerC)
 			case animesState:
 				if b.animesC.FilterState() != list.Unfiltered {
 					b.animesC, cmd = b.animesC.Update(msg)
@@ -130,10 +124,8 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return b.updateAnimes(msg)
 	case episodesState:
 		return b.updateEpisodes(msg)
-	case anilistSelectState:
-		return b.updateAnilistSelect(msg)
-	case malSelectState:
-		return b.updateMALSelect(msg)
+	case trackerSelectState:
+		return b.updateTrackerSelect(msg)
 	case readState:
 		return b.updateRead(msg)
 	case postWatchState:
@@ -182,18 +174,32 @@ func (b *statefulBubble) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-		cmd = b.anilistC.SetItems(items)
-		b.newState(anilistSelectState)
-		b.anilistC.Select(marked)
+		cmd = b.trackerC.SetItems(items)
+		b.newState(trackerSelectState)
+		b.trackerC.Select(marked)
 		return b, tea.Batch(cmd, b.stopLoading())
 	case []mal.Anime:
-		items := make([]list.Item, len(msg))
-		for i := range msg {
-			items[i] = &listItem{internal: &msg[i]}
+		closest, err := mal.FindClosest(b.selectedAnime.Name)
+		id := -1
+		if err == nil {
+			id = closest.ID
 		}
 
-		cmd = b.malListC.SetItems(items)
-		b.newState(malSelectState)
+		items := make([]list.Item, len(msg))
+		var marked int
+		for i := range msg {
+			if msg[i].ID == id {
+				marked = i
+			}
+			items[i] = &listItem{
+				internal: &msg[i],
+				marked:   msg[i].ID == id,
+			}
+		}
+
+		cmd = b.trackerC.SetItems(items)
+		b.newState(trackerSelectState)
+		b.trackerC.Select(marked)
 		return b, tea.Batch(cmd, b.stopLoading())
 	case []*source.Anime:
 		items := make([]list.Item, len(msg))
@@ -307,13 +313,18 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			b.newState(readState)
 			b.stopLoading()
 
-			var anilistCmd tea.Cmd
-			if viper.GetBool(key.AnilistLinkOnAnimeSelect) {
-				anilistCmd = tea.Batch(b.fetchAndSetAnilist(b.selectedAnime), b.waitForAnilistFetchAndSet())
+			var trackerCmd tea.Cmd
+			if viper.GetBool("tracker.auto_link") {
+				trackerCmd = tea.Batch(b.fetchAndSetTracker(b.selectedAnime), b.waitForTrackerFetchAndSet())
 			} else {
-				anilistCmd = b.tryLoadAnilistCache(b.selectedAnime)
+				// Symmetrical cache hydration based on the active backend.
+				if viper.GetString("tracker.backend") == "mal" {
+					trackerCmd = b.tryLoadMALCache(b.selectedAnime)
+				} else {
+					trackerCmd = b.tryLoadAnilistCache(b.selectedAnime)
+				}
 			}
-			return b, tea.Batch(cmd, b.readEpisode(epToPlay), b.startLoading(), anilistCmd)
+			return b, tea.Batch(cmd, b.readEpisode(epToPlay), b.startLoading(), trackerCmd)
 		} else {
 			// If no episodes were found at all, just fall back to the empty episodes list view
 			b.newState(episodesState)
@@ -322,7 +333,7 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	// Episodes are now handled by updateAnimes (standard flow)
 	case tea.KeyMsg:
-		// Phase 3: Vim Navigation Conflict Resolution Bypass
+		// Prevent navigation conflicts during list filtering.
 		if b.historyC.FilterState() == list.Filtering {
 			break
 		}
@@ -402,7 +413,7 @@ func (b *statefulBubble) updateSources(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Phase 3: Vim Navigation Conflict Resolution Bypass
+		// Prevent navigation conflicts during list filtering.
 		if b.animesC.FilterState() == list.Filtering {
 			break
 		}
@@ -635,14 +646,11 @@ func (b *statefulBubble) updateAnimes(msg tea.Msg) (tea.Model, tea.Cmd) {
 			finalCmd = tea.Batch(cmd, b.fetchCoverArt(b.selectedAnime))
 		}
 
-		if viper.GetBool(key.AnilistLinkOnAnimeSelect) {
-			// If auto-link is ON, fetchAndSetAnilist will search online if cache misses
-			// It checks cache internally, so we don't need explicit tryLoadAnilistCache
-			return b, tea.Batch(finalCmd, b.fetchAndSetAnilist(b.selectedAnime), b.waitForAnilistFetchAndSet())
+		if viper.GetBool("tracker.auto_link") {
+			return b, tea.Batch(finalCmd, b.fetchAndSetTracker(b.selectedAnime), b.waitForTrackerFetchAndSet())
 		}
 
-		// If auto-link is OFF, just check cache (no network)
-		return b, tea.Batch(finalCmd, b.tryLoadAnilistCache(b.selectedAnime))
+		return b, finalCmd
 	}
 
 	oldIdx := b.animesC.Index()
@@ -663,11 +671,17 @@ func (b *statefulBubble) updateEpisodes(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case *anilist.Anime:
-		b.anilistAnime = msg
-		cmd = b.episodesC.NewStatusMessage(fmt.Sprintf(`Linked to %s %s`, style.Fg(color.Orange)(msg.Name()), style.Faint(msg.SiteURL)))
+		b.trackerName = msg.Name()
+		b.trackerURL = msg.SiteURL
+		cmd = b.episodesC.NewStatusMessage(fmt.Sprintf(`Linked to %s %s`, style.Fg(color.Orange)(b.trackerName), style.Faint(b.trackerURL)))
+		return b, cmd
+	case *mal.Anime:
+		b.trackerName = msg.Title
+		b.trackerURL = fmt.Sprintf("https://myanimelist.net/anime/%d", msg.ID)
+		cmd = b.episodesC.NewStatusMessage(fmt.Sprintf(`Linked to %s %s`, style.Fg(color.Orange)(b.trackerName), style.Faint(b.trackerURL)))
 		return b, cmd
 	case tea.KeyMsg:
-		// Phase 3: Vim Navigation Conflict Resolution Bypass
+		// Prevent navigation conflicts during list filtering.
 		if b.episodesC.FilterState() == list.Filtering {
 			break
 		}
@@ -701,18 +715,26 @@ func (b *statefulBubble) updateEpisodes(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if err != nil {
 				b.raiseError(err)
 			}
-		case bubblesKey.Matches(msg, b.keymap.anilistSelect):
-			if b.anilistAnime != nil {
-				if err := open.Start(b.anilistAnime.SiteURL); err != nil {
+		case bubblesKey.Matches(msg, b.keymap.trackerSelect):
+			// If already linked, provide the "Open in Browser" QoL feature
+			if b.trackerURL != "" {
+				if err := open.Start(b.trackerURL); err != nil {
 					b.raiseError(err)
 				}
 				return b, nil
 			}
-			b.newState(anilistSelectState)
-			return b, tea.Batch(b.startLoading(), b.fetchAnilist(b.selectedAnime), b.waitForAnilist())
-		case bubblesKey.Matches(msg, b.keymap.malSelect):
+
+			// Otherwise, initiate manual linking based on the active backend
+			backend := viper.GetString("tracker.backend")
+			if backend == "mal" {
+				b.newState(loadingState)
+				return b, tea.Batch(b.startLoading(), b.fetchMALAnime(b.selectedAnime.Name), b.waitForMALAnime())
+			}
+
+			// Default to AniList
+			// Transition to loadingState to ensure the asynchronous []anilist.Anime payload is caught.
 			b.newState(loadingState)
-			return b, tea.Batch(b.startLoading(), b.fetchMALAnime(b.selectedAnime.Name), b.waitForMALAnime())
+			return b, tea.Batch(b.startLoading(), b.fetchAnilist(b.selectedAnime), b.waitForAnilist())
 		case bubblesKey.Matches(msg, b.keymap.selectVolume):
 			if b.episodesC.SelectedItem() == nil {
 				break
@@ -792,57 +814,78 @@ func (b *statefulBubble) updateEpisodes(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return b, cmd
 }
 
-func (b *statefulBubble) updateAnilistSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (b *statefulBubble) updateTrackerSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		// Phase 3: Vim Navigation Conflict Resolution Bypass
-		if b.anilistC.FilterState() == list.Filtering {
+		// Prevent navigation conflicts during list filtering.
+		if b.trackerC.FilterState() == list.Filtering {
 			break
 		}
 
 		switch {
-
 		case bubblesKey.Matches(msg, b.keymap.up):
-			if n := len(b.anilistC.Items()); n > 0 && b.anilistC.Index() == 0 {
-				b.anilistC.Select(n - 1)
+			if n := len(b.trackerC.Items()); n > 0 && b.trackerC.Index() == 0 {
+				b.trackerC.Select(n - 1)
 				return b, nil
 			}
 		case bubblesKey.Matches(msg, b.keymap.down):
-			if n := len(b.anilistC.Items()); n > 0 && b.anilistC.Index() == n-1 {
-				b.anilistC.Select(0)
+			if n := len(b.trackerC.Items()); n > 0 && b.trackerC.Index() == n-1 {
+				b.trackerC.Select(0)
 				return b, nil
 			}
 		case bubblesKey.Matches(msg, b.keymap.openURL):
-			if b.anilistC.SelectedItem() == nil {
+			if b.trackerC.SelectedItem() == nil {
 				break
 			}
-			m, _ := b.anilistC.SelectedItem().(*listItem).internal.(*anilist.Anime)
-			err := open.Start(m.SiteURL)
-			if err != nil {
-				b.raiseError(err)
+			switch m := b.trackerC.SelectedItem().(*listItem).internal.(type) {
+			case *anilist.Anime:
+				err := open.Start(m.SiteURL)
+				if err != nil {
+					b.raiseError(err)
+				}
+			case *mal.Anime:
+				url := fmt.Sprintf("https://myanimelist.net/anime/%d", m.ID)
+				err := open.Start(url)
+				if err != nil {
+					b.raiseError(err)
+				}
 			}
 		case bubblesKey.Matches(msg, b.keymap.confirm, b.keymap.selectOne):
-			if b.anilistC.SelectedItem() == nil {
+			if b.trackerC.SelectedItem() == nil {
 				break
 			}
-			al := b.anilistC.SelectedItem().(*listItem).internal.(*anilist.Anime)
-			err := anilist.SetRelation(b.selectedAnime.Name, al)
-			if err != nil {
-				b.raiseError(err)
-				break
+			switch m := b.trackerC.SelectedItem().(*listItem).internal.(type) {
+			case *anilist.Anime:
+				err := anilist.SetRelation(b.selectedAnime.Name, m)
+				if err != nil {
+					b.raiseError(err)
+					break
+				}
+				b.previousState()
+				cmd = b.episodesC.NewStatusMessage(fmt.Sprintf(`Linked to %s %s`, style.Fg(color.Orange)(m.Name()), style.Faint(m.SiteURL)))
+				return b, cmd
+			case *mal.Anime:
+				err := mal.SetRelation(b.selectedAnime.Name, m)
+				if err != nil {
+					b.raiseError(err)
+					break
+				}
+				b.previousState()
+
+				url := fmt.Sprintf("https://myanimelist.net/anime/%d", m.ID)
+				cmd = b.episodesC.NewStatusMessage(fmt.Sprintf(`Linked to %s %s`, style.Fg(color.Orange)(m.Title), style.Faint(url)))
+
+				return b, cmd
 			}
-			b.previousState()
-			cmd = b.episodesC.NewStatusMessage(fmt.Sprintf(`Linked to %s %s`, style.Fg(color.Orange)(al.Name()), style.Faint(al.SiteURL)))
-			return b, cmd
 		case bubblesKey.Matches(msg, b.keymap.back):
 			b.previousState()
 			return b, nil
 		}
 	}
 
-	b.anilistC, cmd = b.anilistC.Update(msg)
+	b.trackerC, cmd = b.trackerC.Update(msg)
 	return b, cmd
 }
 
@@ -951,13 +994,43 @@ func (b *statefulBubble) updateRead(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if b.currentPlayingEpisode != nil {
 			_ = history.Save(b.currentPlayingEpisode, msg.Percentage)
 
-			if viper.GetBool(key.AnilistEnable) {
-				integrator := intAnilist.New()
-				err := integrator.MarkWatched(b.currentPlayingEpisode)
-				if err != nil && err.Error() == "sync_queued" {
-					// Fallback: Just return a generic nil command since we removed the custom UI package.
-					// The queue will still process it silently in the background.
-					return b, nil
+			if viper.GetBool("tracker.enable") {
+				activeTracker := tracker.InitializeTracker()
+				if activeTracker != nil {
+					if err := activeTracker.CheckAuth(context.Background()); err != nil {
+						b.lastError = err
+					} else {
+						go func(ep *source.Episode) {
+							ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+							defer cancel()
+
+							backend := viper.GetString("tracker.backend")
+							var trackerID int
+							var totalEpisodes int
+
+							if backend == "mal" {
+								if cached := mal.GetCachedRelation(ep.Anime.Name); cached != nil {
+									trackerID = cached.ID
+									totalEpisodes = cached.NumEpisodes
+								} else if res, err := mal.FindClosest(ep.Anime.Name); err == nil {
+									trackerID = res.ID
+									totalEpisodes = res.NumEpisodes
+								}
+							} else {
+								if cached := anilist.GetCachedRelation(ep.Anime.Name); cached != nil {
+									trackerID = cached.ID
+									totalEpisodes = cached.Episodes
+								} else if al, err := anilist.FindClosest(ep.Anime.Name); err == nil {
+									trackerID = al.ID
+									totalEpisodes = al.Episodes
+								}
+							}
+
+							if trackerID != 0 {
+								_ = activeTracker.UpdateEpisodeProgress(ctx, trackerID, int(ep.Index), totalEpisodes)
+							}
+						}(b.currentPlayingEpisode)
+					}
 				}
 			}
 		}
@@ -1005,59 +1078,6 @@ func (b *statefulBubble) updateError(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return b, cmd
 }
 
-func (b *statefulBubble) updateMALSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd tea.Cmd
-
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		// Phase 3: Vim Navigation Conflict Resolution Bypass
-		if b.malListC.FilterState() == list.Filtering {
-			break
-		}
-
-		switch {
-
-		case bubblesKey.Matches(msg, b.keymap.up):
-			if n := len(b.malListC.Items()); n > 0 && b.malListC.Index() == 0 {
-				b.malListC.Select(n - 1)
-				return b, nil
-			}
-		case bubblesKey.Matches(msg, b.keymap.down):
-			if n := len(b.malListC.Items()); n > 0 && b.malListC.Index() == n-1 {
-				b.malListC.Select(0)
-				return b, nil
-			}
-		case bubblesKey.Matches(msg, b.keymap.openURL):
-			if b.malListC.SelectedItem() == nil {
-				break
-			}
-			m, _ := b.malListC.SelectedItem().(*listItem).internal.(*mal.Anime)
-			url := fmt.Sprintf("https://myanimelist.net/anime/%d", m.ID)
-			err := open.Start(url)
-			if err != nil {
-				b.raiseError(err)
-			}
-		case bubblesKey.Matches(msg, b.keymap.confirm, b.keymap.selectOne):
-			if b.malListC.SelectedItem() == nil {
-				break
-			}
-			al := b.malListC.SelectedItem().(*listItem).internal.(*mal.Anime)
-			err := mal.SetRelation(b.selectedAnime.Name, al)
-			if err != nil {
-				b.raiseError(err)
-				break
-			}
-			b.previousState()
-			// Show status message?
-			cmd = b.episodesC.NewStatusMessage(fmt.Sprintf("Linked to %s (MAL)", style.Fg(color.Orange)(al.Title)))
-			return b, cmd
-		}
-	}
-
-	b.malListC, cmd = b.malListC.Update(msg)
-	return b, cmd
-}
-
 func (b *statefulBubble) updateManualID(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
@@ -1083,28 +1103,43 @@ func (b *statefulBubble) updateManualID(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return b, nil
 			}
 
-			// Fetch the full anime metadata from Anilist using the ID
-			// A hollow struct will not persist properly in the cache.
-			al, err := anilist.GetByID(id)
-			if err != nil {
-				b.raiseError(fmt.Errorf("failed to fetch Anilist metadata for ID %d: %w", id, err))
-				return b, nil
-			}
-
-			// Clean anime name exactly like fetchAndSetAnilist
+			// Clean anime name exactly like fetchAndSetTracker does implicitly
+			// to guarantee relation cache mapping consistency.
 			cleanName := b.selectedAnime.Name
 			if idx := strings.LastIndex(cleanName, "("); idx != -1 {
 				cleanName = strings.TrimSpace(cleanName[:idx])
 			}
-
-			err = anilist.SetRelation(cleanName, al)
-			if err != nil {
-				b.raiseError(err)
-				return b, nil
+			backend := viper.GetString("tracker.backend")
+			var msgCmd func() tea.Msg
+			if backend == "mal" {
+				// Fetch the full anime metadata from MAL using the ID.
+				// A hollow struct will not persist properly in the cache.
+				m, err := mal.GetByID(id)
+				if err != nil {
+					b.raiseError(fmt.Errorf("failed to fetch MAL metadata for ID %d: %w", id, err))
+					return b, nil
+				}
+				err = mal.SetRelation(cleanName, m)
+				if err != nil {
+					b.raiseError(err)
+					return b, nil
+				}
+				msgCmd = func() tea.Msg { return m }
+			} else {
+				// Fetch the full anime metadata from Anilist using the ID.
+				// A hollow struct will not persist properly in the cache.
+				al, err := anilist.GetByID(id)
+				if err != nil {
+					b.raiseError(fmt.Errorf("failed to fetch Anilist metadata for ID %d: %w", id, err))
+					return b, nil
+				}
+				err = anilist.SetRelation(cleanName, al)
+				if err != nil {
+					b.raiseError(err)
+					return b, nil
+				}
+				msgCmd = func() tea.Msg { return al }
 			}
-
-			msgCmd := func() tea.Msg { return al }
-
 			if b.state == episodesState {
 				return b, tea.Batch(b.episodesC.NewStatusMessage(fmt.Sprintf("Manually linked to ID %d", id)), msgCmd)
 			}
@@ -1192,4 +1227,35 @@ func (b *statefulBubble) fetchCoverArt(anime *source.Anime) tea.Cmd {
 	}
 
 	return b.fetchCoverArtFromURL(url)
+}
+
+// resolveMalID guarantees a valid MyAnimeList ID for the AniSkip API,
+// seamlessly routing the extraction through the active tracker backend.
+func (b *statefulBubble) resolveMalID(animeName string) int {
+	cleanName := animeName
+	if idx := strings.LastIndex(cleanName, "("); idx != -1 {
+		cleanName = strings.TrimSpace(cleanName[:idx])
+	}
+
+	backend := viper.GetString("tracker.backend")
+
+	if backend == "mal" {
+		// If tracking natively with MAL, the standard ID is the exact requirement.
+		if cached := mal.GetCachedRelation(cleanName); cached != nil {
+			return cached.ID
+		}
+		if res, err := mal.FindClosest(cleanName); err == nil {
+			return res.ID
+		}
+	} else {
+		// If tracking with AniList, we must pluck the secondary IDMal field.
+		if cached := anilist.GetCachedRelation(cleanName); cached != nil {
+			return cached.IDMal
+		}
+		if al, err := anilist.FindClosest(cleanName); err == nil {
+			return al.IDMal
+		}
+	}
+
+	return 0 // Yields 0 if unresolved, causing aniskip to gracefully degrade
 }

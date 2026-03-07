@@ -6,10 +6,8 @@ import (
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/anisan-cli/anisan/icon"
-	"github.com/anisan-cli/anisan/integration/anilist"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/log"
-	"github.com/anisan-cli/anisan/open"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -36,15 +34,13 @@ var integrationAnilistCmd = &cobra.Command{
 See https://github.com/anisan-cli/anisan/wiki/Anilist-Integration for more information`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if lo.Must(cmd.Flags().GetBool("disable")) {
-			viper.Set(key.AnilistEnable, false)
-			viper.Set(key.AnilistCode, "")
-			viper.Set(key.AnilistSecret, "")
-			viper.Set(key.AnilistID, "")
+			viper.Set(key.TrackerEnable, false)
+			viper.Set(key.TrackerAnilistToken, "")
 			log.Info("Anilist integration disabled")
 			handleErr(viper.WriteConfig())
 		}
 
-		if !viper.GetBool(key.AnilistEnable) {
+		if !viper.GetBool(key.TrackerEnable) {
 			confirm := survey.Confirm{
 				Message: "Anilist is disabled. Enable?",
 				Default: false,
@@ -57,7 +53,7 @@ See https://github.com/anisan-cli/anisan/wiki/Anilist-Integration for more infor
 				return
 			}
 
-			viper.Set(key.AnilistEnable, response)
+			viper.Set(key.TrackerEnable, response)
 			err = viper.WriteConfig()
 			if err != nil {
 				switch err.(type) {
@@ -71,9 +67,10 @@ See https://github.com/anisan-cli/anisan/wiki/Anilist-Integration for more infor
 			}
 		}
 
-		if viper.GetString(key.AnilistID) == "" {
+		if viper.GetString(key.TrackerAnilistToken) == "" {
+			fmt.Println("Please generate an Anilist Developer Token and paste it below.")
 			input := survey.Input{
-				Message: "Anilist client ID is not set. Please enter it:",
+				Message: "Anilist Token is not set. Please enter it:",
 				Help:    "",
 			}
 			var response string
@@ -84,61 +81,7 @@ See https://github.com/anisan-cli/anisan/wiki/Anilist-Integration for more infor
 				return
 			}
 
-			viper.Set(key.AnilistID, response)
-			err = viper.WriteConfig()
-			handleErr(err)
-		}
-
-		if viper.GetString(key.AnilistSecret) == "" {
-			input := survey.Input{
-				Message: "Anilist client secret is not set. Please enter it:",
-				Help:    "",
-			}
-			var response string
-			err := survey.AskOne(&input, &response)
-			handleErr(err)
-
-			if response == "" {
-				return
-			}
-
-			viper.Set(key.AnilistSecret, response)
-			err = viper.WriteConfig()
-			handleErr(err)
-		}
-
-		if viper.GetString(key.AnilistCode) == "" {
-			authURL := anilist.New().AuthURL()
-			confirmOpenInBrowser := survey.Confirm{
-				Message: "Open browser to authenticate with Anilist?",
-				Default: false,
-			}
-
-			var openInBrowser bool
-			err := survey.AskOne(&confirmOpenInBrowser, &openInBrowser)
-			if err == nil && openInBrowser {
-				err = open.Start(authURL)
-			}
-
-			if err != nil || !openInBrowser {
-				fmt.Println("Please open the following URL in your browser:")
-				fmt.Println(authURL)
-			}
-
-			input := survey.Input{
-				Message: "Anilist code is not set. Please copy it from the link and paste in here:",
-				Help:    "",
-			}
-
-			var response string
-			err = survey.AskOne(&input, &response)
-			handleErr(err)
-
-			if response == "" {
-				return
-			}
-
-			viper.Set(key.AnilistCode, response)
+			viper.Set(key.TrackerAnilistToken, response)
 			err = viper.WriteConfig()
 			handleErr(err)
 		}
