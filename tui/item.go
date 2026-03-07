@@ -123,17 +123,57 @@ func (t *listItem) Description() (description string) {
 		description = strings.Join(parts, " • ")
 
 	case *history.SavedEpisode:
+		var parts []string
+
+		// Format pharmacological episode position and total count.
+		parts = append(parts, fmt.Sprintf("Ep: %d/%d", e.Index, e.AnimeEpisodesTotal))
+
+		// Render media lifecycle status with semantic color coding (Green for Releasing).
+		if e.Status != "" {
+			var c lipgloss.Color
+			if e.Status == "RELEASING" {
+				c = style.Green
+			} else {
+				c = style.Subtext
+			}
+			statusStr := strings.ToLower(e.Status)
+			if len(statusStr) > 0 {
+				statusStr = strings.ToUpper(statusStr[:1]) + statusStr[1:]
+			}
+			parts = append(parts, lipgloss.NewStyle().Foreground(c).Render(statusStr))
+		}
+
+		// Scale and display user/aggregate score based on the active tracking backend (MAL uses 10.0, Anilist uses %).
+		if e.Score > 0 {
+			if viper.GetString(key.TrackerBackend) == "mal" {
+				parts = append(parts, lipgloss.NewStyle().Foreground(style.AccentColor).Render(fmt.Sprintf("★ %.1f", float64(e.Score)/10.0)))
+			} else {
+				parts = append(parts, lipgloss.NewStyle().Foreground(style.AccentColor).Render(fmt.Sprintf("★ %d%%", e.Score)))
+			}
+		}
+
+		// Genres
+		if len(e.Genres) > 0 {
+			// Limit genres to prevent overly long lines
+			displayGenres := e.Genres
+			if len(displayGenres) > 3 {
+				displayGenres = displayGenres[:3]
+			}
+			parts = append(parts, lipgloss.NewStyle().Foreground(style.FaintColor).Render(strings.Join(displayGenres, ", ")))
+		}
+
+		// Progress
 		completionThreshold := viper.GetFloat64(key.PlayerCompletionPercentage)
 		if completionThreshold <= 0 {
 			completionThreshold = 80.0
 		}
-		progressStr := ""
 		if e.WatchedPercentage > 0 && e.WatchedPercentage < completionThreshold {
-			progressStr = lipgloss.NewStyle().Foreground(style.Yellow).Render(fmt.Sprintf(" (%.0f%%)", e.WatchedPercentage))
+			parts = append(parts, lipgloss.NewStyle().Foreground(style.Yellow).Render(fmt.Sprintf("%.0f%%", e.WatchedPercentage)))
 		} else if e.WatchedPercentage >= completionThreshold {
-			progressStr = lipgloss.NewStyle().Foreground(style.Green).Render(" (Watched)")
+			parts = append(parts, lipgloss.NewStyle().Foreground(style.Green).Render("Watched"))
 		}
-		description = fmt.Sprintf("%s : %d / %d%s", e.Name, e.Index, e.AnimeEpisodesTotal, progressStr)
+
+		description = strings.Join(parts, " • ")
 	case *provider.Provider:
 		sb := strings.Builder{}
 		if e.IsCustom {
@@ -172,7 +212,12 @@ func (t *listItem) FilterValue() string {
 		}
 		return e.Name
 	case *history.SavedEpisode:
-		return e.AnimeName
+		parts := []string{e.AnimeName}
+		if e.Status != "" {
+			parts = append(parts, e.Status)
+		}
+		parts = append(parts, e.Genres...)
+		return strings.Join(parts, " ")
 	case *anilist.Anime:
 		return e.Name()
 	case *provider.Provider:

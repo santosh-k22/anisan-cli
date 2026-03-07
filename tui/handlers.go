@@ -57,6 +57,7 @@ func (b *statefulBubble) loadProviders() tea.Cmd {
 }
 
 func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
+	// Retrieve local history records and sort chronologically for display.
 	saved, err := history.Get()
 	if err != nil {
 		return nil, err
@@ -115,6 +116,7 @@ func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
 }
 
 func (b *statefulBubble) loadSources(ps []*provider.Provider) tea.Cmd {
+	// Initialize scraper backends concurrently using a WaitGroup to minimize interface blocking.
 	return func() tea.Msg {
 		var (
 			sources = make([]source.Source, len(ps))
@@ -175,6 +177,7 @@ func (b *statefulBubble) loadSources(ps []*provider.Provider) tea.Cmd {
 }
 
 func (b *statefulBubble) waitForSourcesLoaded() tea.Cmd {
+	// Block until the sourcesLoadedChannel yields the initialized scraper backends.
 	return func() tea.Msg {
 		select {
 		case res := <-b.sourcesLoadedChannel:
@@ -187,6 +190,7 @@ func (b *statefulBubble) waitForSourcesLoaded() tea.Cmd {
 }
 
 func (b *statefulBubble) searchAnime(query string) tea.Cmd {
+	// Execute a fan-out search across all active providers and aggregate results into a unified set.
 	return func() tea.Msg {
 		log.Info("searching for " + query)
 		b.progressStatus = fmt.Sprintf("Searching among %s", util.Quantify(len(b.selectedSources), "source", "sources"))
@@ -235,6 +239,7 @@ func (b *statefulBubble) waitForAnimes() tea.Cmd {
 }
 
 func (b *statefulBubble) getEpisodes(anime *source.Anime) tea.Cmd {
+	// Fetch the canonical episode list from the anime's origin source.
 	return func() tea.Msg {
 		log.Info("getting episodes of " + anime.Name)
 		episodes, err := anime.Source.EpisodesOf(anime)

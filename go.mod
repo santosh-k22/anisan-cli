@@ -14,6 +14,7 @@ require (
 	github.com/metafates/gache v0.0.2
 	github.com/metafates/mangal-lua-libs v0.5.0
 	github.com/muesli/reflow v0.3.0
+	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646
 	github.com/refraction-networking/utls v1.8.2
 	github.com/samber/lo v1.52.0
 	github.com/samber/mo v1.16.0

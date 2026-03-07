@@ -7,7 +7,7 @@ import (
 
 	"github.com/anisan-cli/anisan/anilist"
 	"github.com/anisan-cli/anisan/constant"
-	"github.com/anisan-cli/anisan/internal/ui"
+	"github.com/anisan-cli/anisan/internal/ui/render"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/mal"
 	"github.com/anisan-cli/anisan/player"
@@ -76,7 +76,9 @@ type statefulBubble struct {
 
 	width, height    int
 	searchSuggestion mo.Option[string]
-	notifier         *ui.Model
+
+	coverArtString string            // ANSI-rendered raster data for the currently highlighted item
+	imageMode      render.RenderMode // Evaluated terminal capability for image rendering
 
 	options *Options
 }
@@ -195,26 +197,34 @@ func newBubble(options *Options) *statefulBubble {
 
 		selectedProviders: make(map[*provider.Provider]struct{}),
 		selectedEpisodes:  make(map[*source.Episode]struct{}),
-
-		notifier: &ui.Model{},
+		imageMode:         render.DetectProtocol(),
 	}
 
 	// Options encapsulates the runtime configuration for the terminal user interface.
 	type listOptions struct {
 		TitleStyle mo.Option[lipgloss.Style]
+		PinkStyle  bool
 	}
 
 	makeList := func(title string, description bool, options *listOptions) list.Model {
 		delegate := list.NewDefaultDelegate()
 		delegate.SetSpacing(viper.GetInt(key.TUIItemSpacing))
 		delegate.ShowDescription = description
-		delegate.Styles.SelectedTitle = lipgloss.NewStyle().
-			Border(lipgloss.ThickBorder(), false, false, false, true).
-			BorderForeground(style.AccentColor).
+
+		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
 			Foreground(style.AccentColor).
+			BorderLeftForeground(style.AccentColor).
 			Padding(0, 0, 0, 1)
+
+		if options != nil && options.PinkStyle {
+			delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
+				Foreground(lipgloss.Color("212")).
+				BorderLeftForeground(lipgloss.Color("212"))
+		} else {
+			delegate.Styles.SelectedDesc = delegate.Styles.SelectedTitle
+		}
+
 		delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color("7"))
-		delegate.Styles.SelectedDesc = delegate.Styles.SelectedTitle
 
 		listC := list.New([]list.Item{}, delegate, 0, 0)
 		listC.KeyMap = bubble.keymap.forList()
@@ -253,7 +263,8 @@ func newBubble(options *Options) *statefulBubble {
 	bubble.idInputC.CharLimit = 20
 	bubble.idInputC.Prompt = "MAL/Anilist ID: "
 
-	bubble.historyC = makeList("History", true, &listOptions{})
+	bubble.historyC = makeList("History", true, &listOptions{PinkStyle: true})
+	bubble.historyC.SetFilteringEnabled(true)
 
 	bubble.sourcesC = makeList("Anime Sources", false, &listOptions{
 		TitleStyle: mo.Some(

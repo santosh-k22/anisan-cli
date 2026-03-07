@@ -31,7 +31,7 @@ func NewClient() *Client {
 	return &Client{
 		httpClient: &http.Client{
 			// Explicit timeout to prevent hanging tracker routines during network degradation.
-			Timeout: 10 * time.Second,
+			Timeout: 15 * time.Second,
 			Transport: &http.Transport{
 				MaxIdleConns:        10,
 				MaxIdleConnsPerHost: 5,
@@ -72,7 +72,7 @@ func (c *Client) UpdateEpisodeProgress(ctx context.Context, id int, episode int)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	// Execute the HTTP transaction
+	// Execute the HTTP transaction via the hardened internal transport.
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		// Network transport failure (e.g., DNS resolution, connection refused, dial timeout).

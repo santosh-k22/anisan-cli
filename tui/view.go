@@ -18,6 +18,7 @@ var (
 )
 
 func (b *statefulBubble) View() string {
+	// View executes the state-driven dispatcher to render the appropriate TUI component layer.
 	var output string
 
 	switch b.state {
@@ -49,7 +50,7 @@ func (b *statefulBubble) View() string {
 		output = "Unknown state"
 	}
 
-	return b.notifier.View(output)
+	return output
 }
 
 func (b *statefulBubble) viewLoading() string {
@@ -64,7 +65,13 @@ func (b *statefulBubble) viewLoading() string {
 }
 
 func (b *statefulBubble) viewHistory() string {
-	return listExtraPaddingStyle.Render(b.historyC.View())
+	historyView := listExtraPaddingStyle.Render(b.historyC.View())
+	// Render a composite horizontal layout when persistent media cover art is available.
+	if b.coverArtString != "" {
+		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
+		return lipgloss.JoinHorizontal(lipgloss.Top, coverView, historyView)
+	}
+	return historyView
 }
 
 func (b *statefulBubble) viewSources() string {
@@ -82,11 +89,22 @@ func (b *statefulBubble) viewSearch() string {
 }
 
 func (b *statefulBubble) viewAnimes() string {
-	return listExtraPaddingStyle.Render(b.animesC.View())
+	animesView := listExtraPaddingStyle.Render(b.animesC.View())
+	// Inject the metadata cover side-pane for visual disambiguation.
+	if b.coverArtString != "" {
+		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
+		return lipgloss.JoinHorizontal(lipgloss.Top, coverView, animesView)
+	}
+	return animesView
 }
 
 func (b *statefulBubble) viewEpisodes() string {
-	return listExtraPaddingStyle.Render(b.episodesC.View())
+	episodesView := listExtraPaddingStyle.Render(b.episodesC.View())
+	if b.coverArtString != "" {
+		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
+		return lipgloss.JoinHorizontal(lipgloss.Top, coverView, episodesView)
+	}
+	return episodesView
 }
 
 func (b *statefulBubble) viewAniList() string {

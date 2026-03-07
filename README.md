@@ -27,8 +27,10 @@ AniSan is a modular, performant CLI for **browsing, streaming, and tracking anim
 | Feature | Description |
 |---|---|
 | 🔌 **Lua-Powered Scrapers** | Easily extensible sources (AllAnime ships by default). |
+| 🖼️ **Terminal Img Renderer**| High-fidelity Anime Cover Art rendered dynamically during TUI search/history via TrueColor ANSI blocking. |
 | 🎬 **MPV Integration** | Background IPC control, auto-resume, visual chapter markers, and HTTP header support. |
 | 📡 **Tracking Sync** | Two-way sync with **Anilist** and **MyAnimeList** featuring an internal offline persistence queue for both backends. |
+| 📊 **Rich History Model** | Visually tracks watch progress, statuses, aggregated scores, and associated genres locally. |
 | ⚡ **7-Day Caching** | Instantaneous TUI loading powered by a native Go metadata cache. |
 | ⏩ **Auto-Skip Intro** | Integration with [AniSkip](https://api.aniskip.com) to skip OP/ED. |
 | 🛡️ **Bypass** | HTTP/2 + uTLS fingerprinting to bypass Cloudflare. |
@@ -203,6 +205,7 @@ AniSan's TUI is designed for speed. **Wrap-Around Scrolling** is enabled globall
 - `↓` / `j`: Down (Wraps around)
 - `←` / `h`: Previous page
 - `→` / `l`: Next page
+- `/` : Activate fuzzy filtering (filters titles, genres, and media statuses)
 - `g`: Jump to Top
 - `G`: Jump to Bottom
 - `q`: Quit

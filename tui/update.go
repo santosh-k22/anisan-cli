@@ -2,16 +2,22 @@
 package tui
 
 import (
+	"context"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/anisan-cli/anisan/anilist"
 	"github.com/anisan-cli/anisan/color"
 	"github.com/anisan-cli/anisan/history"
 	intAnilist "github.com/anisan-cli/anisan/integration/anilist"
-	"github.com/anisan-cli/anisan/internal/ui"
+	"github.com/anisan-cli/anisan/internal/ui/render"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/mal"
 	"github.com/anisan-cli/anisan/open"
@@ -31,15 +37,13 @@ import (
 func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 
-	// Process Ephemeral UI Notifications (captures `string` and `ui.ClearNotificationMsg`)
-	if uiCmd := b.notifier.Update(msg); uiCmd != nil {
-		cmd = tea.Batch(cmd, uiCmd)
-	}
-
 	switch msg := msg.(type) {
 	case provider.ScraperUpdatedMsg:
-		// Provider updates are reloaded asynchronously.
+		// Scraper definition changes actuate a full provider refresh asynchronously.
 		return b, b.loadProviders()
+	case coverArtMsg:
+		b.coverArtString = string(msg)
+		return b, nil
 	case error:
 		b.raiseError(msg)
 	case tea.WindowSizeMsg:
@@ -65,8 +69,10 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			switch b.state {
 			case searchState:
+				// Reset search input and regression to the previous logical state.
 				b.inputC.SetValue("")
 			case episodesState:
+				// Intercept navigation while in fuzzy-filter mode to prevent state regression.
 				if b.episodesC.FilterState() != list.Unfiltered {
 					b.episodesC, cmd = b.episodesC.Update(msg)
 					return b, cmd
@@ -199,7 +205,7 @@ func (b *statefulBubble) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 		b.newState(animesState)
 		b.stopLoading()
 
-		// Asynchronously fetch metadata for each search result to ensure Description() renders accurately.
+		// Asynchronously fetch metadata for each search result to ensure the Description() view contains accurate score and genre data.
 		go func(animes []*source.Anime) {
 			for _, anime := range animes {
 				_ = anime.PopulateMetadata(func(s string) {})
@@ -250,8 +256,8 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		b.selectedAnime = anime
 
-		// Directly fetch episodes for history entries, bypassing the search results view.
-		// since the user already chose this anime from history.
+		// Directly initiate episode retrieval for history entries, bypassing the intermediate search results view
+		// since the user has already confirmed the specific media item from their history.
 		b.progressStatus = fmt.Sprintf("Loading episodes for %s...", anime.Name)
 		b.newState(loadingState)
 		return b, tea.Batch(b.getEpisodes(anime), b.waitForEpisodes(), b.startLoading())
@@ -291,7 +297,7 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		if epToPlay != nil {
-			// Select the episode in the list so "Back to Episodes" returns to the correct cursor position.
+			// Explicitly select the episode in the model to ensure the viewport cursor remains consistent upon playback termination.
 			b.episodesC.Select(epIdx)
 
 			// Initiate immediate playback for chronological history resumption.
@@ -316,6 +322,11 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	// Episodes are now handled by updateAnimes (standard flow)
 	case tea.KeyMsg:
+		// Phase 3: Vim Navigation Conflict Resolution Bypass
+		if b.historyC.FilterState() == list.Filtering {
+			break
+		}
+
 		switch {
 
 		case bubblesKey.Matches(msg, b.keymap.up):
@@ -373,7 +384,16 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	oldIdx := b.historyC.Index()
 	b.historyC, cmd = b.historyC.Update(msg)
+
+	if b.historyC.Index() != oldIdx {
+		if b.historyC.SelectedItem() != nil {
+			m, _ := b.historyC.SelectedItem().(*listItem).internal.(*history.SavedEpisode)
+			cmd = tea.Batch(cmd, b.fetchCoverArtFromURL(m.CoverURL))
+		}
+	}
+
 	return b, cmd
 }
 
@@ -382,6 +402,11 @@ func (b *statefulBubble) updateSources(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Phase 3: Vim Navigation Conflict Resolution Bypass
+		if b.animesC.FilterState() == list.Filtering {
+			break
+		}
+
 		switch {
 
 		case bubblesKey.Matches(msg, b.keymap.up):
@@ -531,9 +556,10 @@ func (b *statefulBubble) updateAnimes(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m, _ := b.animesC.SelectedItem().(*listItem).internal.(*source.Anime)
 			b.selectedAnime = m
+			b.coverArtString = "" // clear stale image
 			b.progressStatus = fmt.Sprintf("Loading episodes for %s...", m.Name)
 			go query.Remember(m.Name, 2)
-			return b, tea.Batch(b.getEpisodes(m), b.waitForEpisodes(), b.startLoading())
+			return b, tea.Batch(b.getEpisodes(m), b.waitForEpisodes(), b.startLoading(), b.fetchCoverArt(m))
 
 		}
 	case []*source.Episode:
@@ -550,6 +576,7 @@ func (b *statefulBubble) updateAnimes(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		cmd = b.episodesC.SetItems(items)
+		b.coverArtString = "" // clear previous image
 		b.newState(episodesState)
 		b.stopLoading()
 
@@ -600,12 +627,12 @@ func (b *statefulBubble) updateAnimes(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			if epToPlay != nil {
-				b.currentPlayingEpisode = epToPlay
-				b.newState(readState)
-				finalCmd = tea.Batch(cmd, b.readEpisode(epToPlay), b.startLoading())
+				finalCmd = tea.Batch(cmd, b.readEpisode(epToPlay), b.fetchCoverArt(b.selectedAnime))
+			} else {
+				finalCmd = tea.Batch(cmd, b.fetchCoverArt(b.selectedAnime))
 			}
 		} else {
-			finalCmd = cmd
+			finalCmd = tea.Batch(cmd, b.fetchCoverArt(b.selectedAnime))
 		}
 
 		if viper.GetBool(key.AnilistLinkOnAnimeSelect) {
@@ -618,7 +645,16 @@ func (b *statefulBubble) updateAnimes(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return b, tea.Batch(finalCmd, b.tryLoadAnilistCache(b.selectedAnime))
 	}
 
+	oldIdx := b.animesC.Index()
 	b.animesC, cmd = b.animesC.Update(msg)
+
+	if b.animesC.Index() != oldIdx {
+		if b.animesC.SelectedItem() != nil {
+			m, _ := b.animesC.SelectedItem().(*listItem).internal.(*source.Anime)
+			cmd = tea.Batch(cmd, b.fetchCoverArt(m))
+		}
+	}
+
 	return b, cmd
 }
 
@@ -631,6 +667,11 @@ func (b *statefulBubble) updateEpisodes(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd = b.episodesC.NewStatusMessage(fmt.Sprintf(`Linked to %s %s`, style.Fg(color.Orange)(msg.Name()), style.Faint(msg.SiteURL)))
 		return b, cmd
 	case tea.KeyMsg:
+		// Phase 3: Vim Navigation Conflict Resolution Bypass
+		if b.episodesC.FilterState() == list.Filtering {
+			break
+		}
+
 		switch {
 
 		case bubblesKey.Matches(msg, b.keymap.up):
@@ -756,6 +797,11 @@ func (b *statefulBubble) updateAnilistSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Phase 3: Vim Navigation Conflict Resolution Bypass
+		if b.anilistC.FilterState() == list.Filtering {
+			break
+		}
+
 		switch {
 
 		case bubblesKey.Matches(msg, b.keymap.up):
@@ -909,7 +955,9 @@ func (b *statefulBubble) updateRead(msg tea.Msg) (tea.Model, tea.Cmd) {
 				integrator := intAnilist.New()
 				err := integrator.MarkWatched(b.currentPlayingEpisode)
 				if err != nil && err.Error() == "sync_queued" {
-					return b, ui.NotifySyncFailure()
+					// Fallback: Just return a generic nil command since we removed the custom UI package.
+					// The queue will still process it silently in the background.
+					return b, nil
 				}
 			}
 		}
@@ -962,6 +1010,11 @@ func (b *statefulBubble) updateMALSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Phase 3: Vim Navigation Conflict Resolution Bypass
+		if b.malListC.FilterState() == list.Filtering {
+			break
+		}
+
 		switch {
 
 		case bubblesKey.Matches(msg, b.keymap.up):
@@ -1065,4 +1118,78 @@ func (b *statefulBubble) updateManualID(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	b.idInputC, cmd = b.idInputC.Update(msg)
 	return b, cmd
+}
+
+type coverArtMsg string
+
+func (b *statefulBubble) getDynamicImageSize() (int, int) {
+	// Dynamically compute layout dimensions based on terminal properties. Follow subtractive/clean specs.
+	targetWidth := b.width / 4
+	if targetWidth > 40 {
+		targetWidth = 40
+	}
+	if targetWidth < 20 {
+		targetWidth = 20
+	}
+
+	targetHeight := b.height / 2
+	if targetHeight > 24 {
+		targetHeight = 24
+	}
+	if targetHeight < 12 {
+		targetHeight = 12
+	}
+	return targetWidth, targetHeight
+}
+
+func (b *statefulBubble) fetchCoverArtFromURL(url string) tea.Cmd {
+	return func() tea.Msg {
+		if url == "" {
+			return coverArtMsg("")
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return coverArtMsg("")
+		}
+
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Do(req)
+		if err != nil {
+			return coverArtMsg("")
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return coverArtMsg("")
+		}
+
+		img, _, err := image.Decode(resp.Body)
+		if err != nil {
+			return coverArtMsg("")
+		}
+
+		w, h := b.getDynamicImageSize()
+		ansii := render.RenderCoverArt(img, uint(w), uint(h), b.imageMode)
+		return coverArtMsg(ansii)
+	}
+}
+
+func (b *statefulBubble) fetchCoverArt(anime *source.Anime) tea.Cmd {
+	if anime == nil {
+		return func() tea.Msg { return coverArtMsg("") }
+	}
+
+	url := anime.Metadata.Cover.ExtraLarge
+	if url == "" {
+		url = anime.Metadata.Cover.Large
+	}
+	if url == "" {
+		url = anime.Metadata.Cover.Medium
+	}
+
+	return b.fetchCoverArtFromURL(url)
 }

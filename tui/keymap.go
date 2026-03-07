@@ -27,7 +27,7 @@ type statefulKeymap struct {
 	top, bottom,
 	nextEp, prevEp, playPause, replay,
 	manualID, saveAsDefault, changeSource,
-	showHelp key.Binding
+	showHelp key.Binding // Bound exclusively to '?' to prevent h/j/k/l navigation conflicts.
 }
 
 // setState updates the active keymap configuration to match the specified application state.
@@ -138,7 +138,7 @@ func newStatefulKeymap() *statefulKeymap {
 			key.WithHelp("r", "replay"),
 		),
 		showHelp: key.NewBinding(
-			key.WithKeys("?", "h"),
+			key.WithKeys("?"),
 			key.WithHelp("?", "help"),
 		),
 		manualID: key.NewBinding(
@@ -202,13 +202,13 @@ func (k *statefulKeymap) FullHelp() [][]key.Binding {
 
 func (k *statefulKeymap) forList() list.KeyMap {
 	return list.KeyMap{
-		CursorUp:   k.up,
-		CursorDown: k.down,
-		NextPage:   k.right,
-		PrevPage:   k.left,
-		GoToStart:  k.top,
-		GoToEnd:    k.bottom,
-		// Filter:               k.filter, // DISABLED
+		CursorUp:             k.up,
+		CursorDown:           k.down,
+		NextPage:             k.right,
+		PrevPage:             k.left,
+		GoToStart:            k.top,
+		GoToEnd:              k.bottom,
+		Filter:               k.filter,
 		ClearFilter:          k.back,
 		CancelWhileFiltering: k.back,
 		AcceptWhileFiltering: k.confirm,
