@@ -44,6 +44,18 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case coverArtMsg:
 		b.coverArtString = string(msg)
 		return b, nil
+	case metadataPopulatedMsg:
+		// Metadata has been fetched for one anime. Refresh the list so Description() picks it up.
+		// If this is the currently highlighted item, also update the cover art side pane.
+		if b.state == animesState {
+			cmd = b.animesC.SetItems(b.animesC.Items())
+			if item := b.animesC.SelectedItem(); item != nil {
+				if selected, ok := item.(*listItem).internal.(*source.Anime); ok && selected == msg.anime {
+					cmd = tea.Batch(cmd, b.fetchCoverArt(msg.anime))
+				}
+			}
+		}
+		return b, cmd
 	case error:
 		b.raiseError(msg)
 	case tea.WindowSizeMsg:
@@ -211,12 +223,14 @@ func (b *statefulBubble) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 		b.newState(animesState)
 		b.stopLoading()
 
-		// Asynchronously fetch metadata for each search result to ensure the Description() view contains accurate score and genre data.
-		go func(animes []*source.Anime) {
-			for _, anime := range animes {
-				_ = anime.PopulateMetadata(func(s string) {})
-			}
-		}(msg)
+		// Kick off concurrent metadata enrichment for the first page of results.
+		// Each fetch delivers metadataPopulatedMsg through the Bubbletea loop so the UI re-renders.
+		cmds = append(cmds, b.batchPopulateMetadata(msg))
+
+		// Eagerly load cover art for the first item so the side pane is populated immediately.
+		if len(msg) > 0 {
+			cmds = append(cmds, b.fetchCoverArt(msg[0]))
+		}
 	case []*source.Episode:
 		if b.statesHistory.Peek() == historyState {
 			b.newState(historyState)
@@ -333,21 +347,23 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	// Episodes are now handled by updateAnimes (standard flow)
 	case tea.KeyMsg:
-		// Prevent navigation conflicts during list filtering.
+		// In Filtering state, all keypresses go to the text input box.
+		// Let Bubbletea's list handle them exclusively — typing refines the filter,
+		// Enter commits it (transitions to FilterApplied), Esc cancels.
 		if b.historyC.FilterState() == list.Filtering {
 			break
 		}
-
 		switch {
 
 		case bubblesKey.Matches(msg, b.keymap.up):
-			if n := len(b.historyC.Items()); n > 0 && b.historyC.Index() == 0 {
-				b.historyC.Select(n - 1)
+			visible := b.historyC.VisibleItems()
+			if len(visible) > 0 && b.historyC.Index() == 0 {
+				b.historyC.Select(len(visible) - 1)
 				return b, nil
 			}
 		case bubblesKey.Matches(msg, b.keymap.down):
-			p := b.historyC.Items()
-			if len(p) > 0 && b.historyC.Index() == len(p)-1 {
+			visible := b.historyC.VisibleItems()
+			if len(visible) > 0 && b.historyC.Index() == len(visible)-1 {
 				b.historyC.Select(0)
 				return b, nil
 			}
@@ -390,13 +406,36 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return b, tea.Batch(b.startLoading(), b.loadSources([]*provider.Provider{p}), b.waitForSourcesLoaded())
 			}
 		case bubblesKey.Matches(msg, b.keymap.back):
+			if b.historyC.FilterState() != list.Unfiltered {
+				break
+			}
 			b.previousState()
 			return b, nil
 		}
 	}
 
+	prevFilterState := b.historyC.FilterState()
 	oldIdx := b.historyC.Index()
 	b.historyC, cmd = b.historyC.Update(msg)
+
+	// fzf-style single-Enter selection: when the user presses Enter to commit the filter,
+	// immediately play the currently highlighted item instead of requiring a second Enter.
+	// The user navigates with arrow keys WHILE the filter box is open, then Enter confirms.
+	if prevFilterState == list.Filtering && b.historyC.FilterState() == list.FilterApplied {
+		if b.historyC.SelectedItem() != nil {
+			selected := b.historyC.SelectedItem().(*listItem).internal.(*history.SavedEpisode)
+			providers := lo.Map(b.sourcesC.Items(), func(i list.Item, _ int) *provider.Provider {
+				return i.(*listItem).internal.(*provider.Provider)
+			})
+			p, ok := lo.Find(providers, func(p *provider.Provider) bool {
+				return p.ID == selected.SourceID
+			})
+			if ok {
+				b.newState(loadingState)
+				return b, tea.Batch(b.startLoading(), b.loadSources([]*provider.Provider{p}), b.waitForSourcesLoaded())
+			}
+		}
+	}
 
 	if b.historyC.Index() != oldIdx {
 		if b.historyC.SelectedItem() != nil {
@@ -414,23 +453,28 @@ func (b *statefulBubble) updateSources(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		// Prevent navigation conflicts during list filtering.
-		if b.animesC.FilterState() == list.Filtering {
+		if b.sourcesC.FilterState() == list.Filtering {
 			break
 		}
-
 		switch {
 
 		case bubblesKey.Matches(msg, b.keymap.up):
-			if n := len(b.sourcesC.Items()); n > 0 && b.sourcesC.Index() == 0 {
+			if n := len(b.sourcesC.VisibleItems()); n > 0 && b.sourcesC.Index() == 0 {
 				b.sourcesC.Select(n - 1)
 				return b, nil
 			}
 		case bubblesKey.Matches(msg, b.keymap.down):
-			p := b.sourcesC.Items()
+			p := b.sourcesC.VisibleItems()
 			if n := len(p); n > 0 && b.sourcesC.Index() == n-1 {
 				b.sourcesC.Select(0)
 				return b, nil
 			}
+		case bubblesKey.Matches(msg, b.keymap.back):
+			if b.sourcesC.FilterState() != list.Unfiltered {
+				break
+			}
+			b.previousState()
+			return b, nil
 		case bubblesKey.Matches(msg, b.keymap.selectAll):
 			for _, item := range b.sourcesC.Items() {
 				item := item.(*listItem)
@@ -546,21 +590,32 @@ func (b *statefulBubble) updateAnimes(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
+		// Prevent navigation conflicts during list filtering.
+		if b.animesC.FilterState() == list.Filtering {
+			break
+		}
 		switch {
 		case bubblesKey.Matches(msg, b.keymap.changeSource):
 			b.newState(sourcesState)
 			return b, b.loadProviders()
 
 		case bubblesKey.Matches(msg, b.keymap.up):
-			if n := len(b.animesC.Items()); n > 0 && b.animesC.Index() == 0 {
+			if n := len(b.animesC.VisibleItems()); n > 0 && b.animesC.Index() == 0 {
 				b.animesC.Select(n - 1)
 				return b, nil
 			}
 		case bubblesKey.Matches(msg, b.keymap.down):
-			if n := len(b.animesC.Items()); n > 0 && b.animesC.Index() == n-1 {
+			p := b.animesC.VisibleItems()
+			if n := len(p); n > 0 && b.animesC.Index() == n-1 {
 				b.animesC.Select(0)
 				return b, nil
 			}
+		case bubblesKey.Matches(msg, b.keymap.back):
+			if b.animesC.FilterState() != list.Unfiltered {
+				break
+			}
+			b.previousState()
+			return b, nil
 		case bubblesKey.Matches(msg, b.keymap.confirm, b.keymap.selectOne):
 			if b.animesC.SelectedItem() == nil {
 				break
@@ -685,19 +740,25 @@ func (b *statefulBubble) updateEpisodes(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if b.episodesC.FilterState() == list.Filtering {
 			break
 		}
-
 		switch {
 
 		case bubblesKey.Matches(msg, b.keymap.up):
-			if n := len(b.episodesC.Items()); n > 0 && b.episodesC.Index() == 0 {
+			if n := len(b.episodesC.VisibleItems()); n > 0 && b.episodesC.Index() == 0 {
 				b.episodesC.Select(n - 1)
 				return b, nil
 			}
 		case bubblesKey.Matches(msg, b.keymap.down):
-			if n := len(b.episodesC.Items()); n > 0 && b.episodesC.Index() == n-1 {
+			p := b.episodesC.VisibleItems()
+			if n := len(p); n > 0 && b.episodesC.Index() == n-1 {
 				b.episodesC.Select(0)
 				return b, nil
 			}
+		case bubblesKey.Matches(msg, b.keymap.back):
+			if b.episodesC.FilterState() != list.Unfiltered {
+				break
+			}
+			b.previousState()
+			return b, nil
 		case bubblesKey.Matches(msg, b.keymap.manualID):
 			if b.episodesC.SelectedItem() == nil {
 				break
@@ -823,15 +884,15 @@ func (b *statefulBubble) updateTrackerSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if b.trackerC.FilterState() == list.Filtering {
 			break
 		}
-
 		switch {
 		case bubblesKey.Matches(msg, b.keymap.up):
-			if n := len(b.trackerC.Items()); n > 0 && b.trackerC.Index() == 0 {
+			if n := len(b.trackerC.VisibleItems()); n > 0 && b.trackerC.Index() == 0 {
 				b.trackerC.Select(n - 1)
 				return b, nil
 			}
 		case bubblesKey.Matches(msg, b.keymap.down):
-			if n := len(b.trackerC.Items()); n > 0 && b.trackerC.Index() == n-1 {
+			p := b.trackerC.VisibleItems()
+			if n := len(p); n > 0 && b.trackerC.Index() == n-1 {
 				b.trackerC.Select(0)
 				return b, nil
 			}
@@ -880,6 +941,9 @@ func (b *statefulBubble) updateTrackerSelect(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return b, cmd
 			}
 		case bubblesKey.Matches(msg, b.keymap.back):
+			if b.trackerC.FilterState() != list.Unfiltered {
+				break
+			}
 			b.previousState()
 			return b, nil
 		}
@@ -1160,19 +1224,19 @@ type coverArtMsg string
 func (b *statefulBubble) getDynamicImageSize() (int, int) {
 	// Dynamically compute layout dimensions based on terminal properties. Follow subtractive/clean specs.
 	targetWidth := b.width / 4
-	if targetWidth > 40 {
-		targetWidth = 40
+	if targetWidth > 60 {
+		targetWidth = 60
 	}
-	if targetWidth < 20 {
-		targetWidth = 20
+	if targetWidth < 30 {
+		targetWidth = 30
 	}
 
 	targetHeight := b.height / 2
-	if targetHeight > 24 {
-		targetHeight = 24
+	if targetHeight > 36 {
+		targetHeight = 36
 	}
-	if targetHeight < 12 {
-		targetHeight = 12
+	if targetHeight < 16 {
+		targetHeight = 16
 	}
 	return targetWidth, targetHeight
 }

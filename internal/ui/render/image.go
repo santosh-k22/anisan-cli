@@ -2,10 +2,12 @@ package render
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"image"
 	"image/color"
 	_ "image/jpeg"
+	"image/png"
 	_ "image/png"
 	"os"
 	"strings"
@@ -17,52 +19,99 @@ import (
 type RenderMode int
 
 const (
+	// ModeKitty utilizes the Kitty terminal graphics protocol for high-performance direct image rendering.
 	ModeKitty RenderMode = iota
 	ModeSixel
 	ModeHalfBlock
 )
 
 // DetectProtocol implements an environment interrogation logic mirroring the Rust 'viu' library.
+// Currently returns ModeHalfBlock uniformly to ensure robust TrueColor ASCII layout stability
+// across all environments until native Kitty protocol (Base64 PNG chunking) is fully implemented.
 func DetectProtocol() RenderMode {
 	term := os.Getenv("TERM")
+	termProgram := os.Getenv("TERM_PROGRAM")
+	tmux := os.Getenv("TMUX")
 
-	// Interrogate the TERM variable for known Kitty-compatible emulators.
-	if strings.Contains(term, "kitty") || strings.Contains(term, "wezterm") || strings.Contains(term, "ghostty") {
-		// Ensure we are not inside a multiplexer that breaks the APC protocol.
-		// If TMUX is present, we must degrade the render mode.
-		if os.Getenv("TMUX") == "" {
-			return ModeKitty
-		}
+	// If we're inside tmux, kitty graphics protocol generally won't work out-of-the-box
+	// without bypass sequences, so default to half-blocks for safety and stability.
+	if tmux != "" {
+		return ModeHalfBlock
 	}
 
-	// Sixel support requires deeper terminfo capability queries (e.g., DA1 responses).
-	// For the automatic cascade within a Bubbletea context, we fallback to the robust
-	// TrueColor half-blocks to ensure absolute layout stability.
+	if strings.Contains(term, "kitty") || termProgram == "WezTerm" || termProgram == "ghostty" {
+		return ModeKitty
+	}
+
 	return ModeHalfBlock
 }
 
 // RenderCoverArt mathematically scales and converts an image into a Bubbletea-compatible string.
 func RenderCoverArt(img image.Image, targetWidth, targetHeight uint, mode RenderMode) string {
-	// 1. Resize the image to fit the TUI layout constraints while preserving the aspect ratio.
-	// We mathematically double the target height because Unicode half-blocks represent
-	// two vertical pixels within a single terminal cell.
-	scaledImg := resize.Thumbnail(targetWidth, targetHeight*2, img, resize.Lanczos3)
-
 	switch mode {
 	case ModeKitty:
-		return renderKitty(scaledImg)
+		// Do NOT resize the image for Kitty. Let the terminal emulator scale the raw data natively.
+		// We still pass the cell dimensions (targetWidth/targetHeight) so Lipgloss can reserve the layout space.
+		return renderKitty(img, int(targetWidth), int(targetHeight))
+
 	case ModeHalfBlock:
+		// ONLY resize if we are using the half-block text fallback.
+		// We mathematically double the target height because Unicode half-blocks represent
+		// two vertical pixels within a single terminal cell.
+		scaledImg := resize.Thumbnail(targetWidth, targetHeight*2, img, resize.Lanczos3)
 		return renderHalfBlocks(scaledImg)
+
 	default:
+		scaledImg := resize.Thumbnail(targetWidth, targetHeight*2, img, resize.Lanczos3)
 		return renderHalfBlocks(scaledImg)
 	}
 }
 
-// renderKitty encodes the image into the Kitty Application Program Command payload.
-func renderKitty(img image.Image) string {
-	// Conceptual placeholder demonstrating the Kitty APC protocol architecture.
-	// Actual implementation requires Base64-encoded PNG chunking for raster persistence.
-	return "\033_Gf=32,a=T,t=d;\033\\"
+// renderKitty encodes the image into chunked Kitty Application Program Command payloads.
+func renderKitty(img image.Image, widthInCells, heightInCells int) string {
+	var buf bytes.Buffer
+	// 1. Encode the image into PNG format
+	err := png.Encode(&buf, img)
+	if err != nil {
+		return ""
+	}
+
+	// 2. Base64 encode the binary payload
+	b64 := base64.StdEncoding.EncodeToString(buf.Bytes())
+
+	var result strings.Builder
+
+	// Invalidate and delete any previously rendered Kitty images to prevent overlapping.
+	result.WriteString("\033_Ga=d,d=A\033\\")
+
+	chunkSize := 4096
+
+	// 3. Emit chunked APC sequences (\033_G...;\033\\)
+	for i := 0; i < len(b64); i += chunkSize {
+		end := i + chunkSize
+		m := 1 // 'm=1' tells the terminal more chunks are coming
+
+		// If this is the final chunk
+		if end >= len(b64) {
+			end = len(b64)
+			m = 0 // 'm=0' tells the terminal this is the final chunk
+		}
+
+		chunk := b64[i:end]
+
+		if i == 0 {
+			// First chunk must include format (f=100 for PNG), action (a=T for transmit)
+			// display action (d=a for place and display), cursor action (C=1 for place at cursor)
+			// columns (c=w), and rows (r=h).
+			result.WriteString(fmt.Sprintf("\033_Ga=T,f=100,d=a,C=1,c=%d,r=%d,m=%d;%s\033\\",
+				widthInCells, heightInCells, m, chunk))
+		} else {
+			// Subsequent chunks only need the 'm' flag
+			result.WriteString(fmt.Sprintf("\033_Gm=%d;%s\033\\", m, chunk))
+		}
+	}
+
+	return result.String()
 }
 
 // rgbaTo8Bit shifts 16-bit color values to 8-bit components.

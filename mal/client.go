@@ -16,7 +16,7 @@ const (
 	apiEndpoint = "https://api.myanimelist.net/v2"
 )
 
-// authenticatedRequest performs an HTTP request with the OAuth token, with native Auto-Refresh.
+// authenticatedRequest executes an HTTP request using an OAuth2 Bearer token, automatically refreshing the token on 401 Unauthorized responses.
 func authenticatedRequest(method, urlStr string, body string) (*http.Response, error) {
 	token, err := LoadToken()
 	if err != nil {

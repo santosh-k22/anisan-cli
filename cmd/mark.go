@@ -22,10 +22,11 @@ func init() {
 	_ = markCmd.MarkFlagRequired("episode")
 }
 
+// markCmd facilitates headless progress synchronization by searching and updating the active tracker (AniList or MAL) for a specific episode.
 var markCmd = &cobra.Command{
 	Use:   "mark",
 	Short: "Headless progress synchronization",
-	Long:  "Automatically searches and updates progress using your active tracker (AniList or MAL) defined in config.toml.",
+	Long:  "Automatically searches and updates progress using your active tracker (AniList or MyAnimeList) as defined in the application configuration.",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		query, _ := cmd.Flags().GetString("query")
 		episodeIdx, _ := cmd.Flags().GetInt("episode")

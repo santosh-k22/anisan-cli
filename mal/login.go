@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// Login triggers the OAuth2 PKCE flow, utilizing a transient local server for seamless UX.
+// Login orchestrates the MyAnimeList OAuth2 PKCE authentication flow, including local callback server lifecycle management.
 func Login() error {
 	clientID := viper.GetString("tracker.mal.client_id")
 	if clientID == "" {

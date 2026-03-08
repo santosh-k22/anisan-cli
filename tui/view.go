@@ -7,6 +7,7 @@ import (
 
 	"github.com/anisan-cli/anisan/color"
 	"github.com/anisan-cli/anisan/icon"
+	"github.com/anisan-cli/anisan/internal/ui/render"
 	"github.com/anisan-cli/anisan/style"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/muesli/reflow/wrap"
@@ -48,6 +49,11 @@ func (b *statefulBubble) View() string {
 		output = "Unknown state"
 	}
 
+	// Flush residual Kitty graphics when transitioning to states without cover art.
+	if b.coverArtString == "" && b.imageMode == render.ModeKitty {
+		output += "\033_Ga=d,d=A\033\\"
+	}
+
 	return output
 }
 
@@ -64,10 +70,10 @@ func (b *statefulBubble) viewLoading() string {
 
 func (b *statefulBubble) viewHistory() string {
 	historyView := listExtraPaddingStyle.Render(b.historyC.View())
-	// Render a composite horizontal layout when persistent media cover art is available.
+	// Split layout when cover art is available for the current selection.
 	if b.coverArtString != "" {
 		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
-		return lipgloss.JoinHorizontal(lipgloss.Top, coverView, historyView)
+		return lipgloss.JoinHorizontal(lipgloss.Top, historyView, coverView)
 	}
 	return historyView
 }
@@ -91,7 +97,7 @@ func (b *statefulBubble) viewAnimes() string {
 	// Inject the metadata cover side-pane for visual disambiguation.
 	if b.coverArtString != "" {
 		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
-		return lipgloss.JoinHorizontal(lipgloss.Top, coverView, animesView)
+		return lipgloss.JoinHorizontal(lipgloss.Top, animesView, coverView)
 	}
 	return animesView
 }
@@ -100,7 +106,7 @@ func (b *statefulBubble) viewEpisodes() string {
 	episodesView := listExtraPaddingStyle.Render(b.episodesC.View())
 	if b.coverArtString != "" {
 		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
-		return lipgloss.JoinHorizontal(lipgloss.Top, coverView, episodesView)
+		return lipgloss.JoinHorizontal(lipgloss.Top, episodesView, coverView)
 	}
 	return episodesView
 }

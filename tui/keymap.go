@@ -94,19 +94,19 @@ func newStatefulKeymap() *statefulKeymap {
 		),
 		up: key.NewBinding(
 			key.WithKeys("up", "k"),
-			key.WithHelp("↑", "up"),
+			key.WithHelp("k/↑", "up"),
 		),
 		down: key.NewBinding(
 			key.WithKeys("down", "j"),
-			key.WithHelp("↓", "down"),
+			key.WithHelp("j/↓", "down"),
 		),
 		left: key.NewBinding(
 			key.WithKeys("left", "h"),
-			key.WithHelp("←", "left"),
+			key.WithHelp("h/←", "left"),
 		),
 		right: key.NewBinding(
 			key.WithKeys("right", "l"),
-			key.WithHelp("→", "right"),
+			key.WithHelp("l/→", "right"),
 		),
 		top: key.NewBinding(
 			key.WithKeys("g"),

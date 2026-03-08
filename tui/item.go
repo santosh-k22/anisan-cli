@@ -59,6 +59,8 @@ func (t *listItem) Title() (title string) {
 		} else {
 			title = e.Name
 		}
+	case *history.SavedEpisode:
+		title = e.AnimeName
 	case *mal.Anime:
 		title = e.Title
 	case string:
@@ -123,8 +125,8 @@ func (t *listItem) Description() (description string) {
 	case *history.SavedEpisode:
 		var parts []string
 
-		// Format chronological episode position and total count.
-		parts = append(parts, fmt.Sprintf("Ep: %d/%d", e.Index, e.AnimeEpisodesTotal))
+		// Display the specific episode index for historical reference.
+		parts = append(parts, fmt.Sprintf("Ep: %d", e.Index))
 
 		// Render media lifecycle status with semantic color coding (Green for Releasing).
 		if e.Status != "" {
@@ -141,7 +143,7 @@ func (t *listItem) Description() (description string) {
 			parts = append(parts, lipgloss.NewStyle().Foreground(c).Render(statusStr))
 		}
 
-		// Scale and display user/aggregate score based on the active tracking backend (MAL uses 10.0, Anilist uses %).
+		// Normalize and display scores based on the active tracking backend's specific scale.
 		if e.Score > 0 {
 			if viper.GetString(key.TrackerBackend) == "mal" {
 				parts = append(parts, lipgloss.NewStyle().Foreground(style.AccentColor).Render(fmt.Sprintf("★ %.1f", float64(e.Score)/10.0)))
@@ -150,9 +152,7 @@ func (t *listItem) Description() (description string) {
 			}
 		}
 
-		// Genres
 		if len(e.Genres) > 0 {
-			// Limit genres to prevent overly long lines
 			displayGenres := e.Genres
 			if len(displayGenres) > 3 {
 				displayGenres = displayGenres[:3]
@@ -160,7 +160,6 @@ func (t *listItem) Description() (description string) {
 			parts = append(parts, lipgloss.NewStyle().Foreground(style.FaintColor).Render(strings.Join(displayGenres, ", ")))
 		}
 
-		// Progress
 		completionThreshold := viper.GetFloat64(key.PlayerCompletionPercentage)
 		if completionThreshold <= 0 {
 			completionThreshold = 80.0

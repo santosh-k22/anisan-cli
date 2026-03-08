@@ -151,7 +151,7 @@ func (a *Anime) BindWithTracker() error {
 	return nil
 }
 
-// PopulateMetadata retrieves and assigns extended metadata fields for the anime entity.
+// PopulateMetadata unifies anime metadata from multiple tracking backends (Jikan, MAL, AniList) to ensure a comprehensive display record.
 func (a *Anime) PopulateMetadata(progress func(string)) error {
 	if a.populated {
 		return nil
@@ -159,43 +159,40 @@ func (a *Anime) PopulateMetadata(progress func(string)) error {
 	a.populated = true
 
 	if viper.GetString(key.TrackerBackend) == "mal" {
-		progress("Fetching metadata from MAL/Jikan")
-		log.Infof("Populating metadata from MAL/Jikan for %s", a.Name)
+		progress("Fetching metadata from Jikan")
+		log.Infof("Populating metadata via Jikan (no auth required) for %s", a.Name)
 
-		// Metadata Resolution: Fall back to AniList if the authenticated MAL pipeline
-		// fails to resolve a valid media entry.
-		if _, err := mal.LoadToken(); err != nil {
-			log.Warn("MAL token not found; falling back to AniList for metadata")
-		} else {
-			res, err := mal.SearchAnime(a.Name)
-			if err != nil || len(res) == 0 {
-				progress("Failed to fetch MAL metadata")
-				return fmt.Errorf("anime '%s' not found on MAL", a.Name)
-			}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-
-			jikanData, err := jikan.FetchMetadata(ctx, res[0].ID)
-			if err != nil {
-				progress("Failed to fetch Jikan metadata")
-				return fmt.Errorf("failed to fetch Jikan metadata: %w", err)
-			}
-
+		// Use Jikan's public search API — no MAL token needed.
+		// MAL auth is only required for tracking episode progress updates.
+		jikanData, err := jikan.SearchByName(ctx, a.Name)
+		if err == nil {
 			a.Metadata.Title = jikanData.EnglishTitle
 			if a.Metadata.Title == "" {
 				a.Metadata.Title = a.Name
 			}
-			// Normalize high-precision MAL decimal scores (1.0-10.0) to the internal integer range (0-100).
+			// Normalize Jikan's 0.0-10.0 score to the internal 0-100 integer range.
 			a.Metadata.Score = int(jikanData.Score * 10)
 			a.Metadata.Status = jikanData.Status
 			a.Metadata.Episodes = jikanData.TotalEpisodes
 			if jikanData.Year > 0 {
 				a.Metadata.StartDate = Date{Year: jikanData.Year, Month: 1, Day: 1}
 			}
-
+			a.Metadata.Summary = jikanData.Synopsis
+			a.Metadata.Genres = make([]string, len(jikanData.Genres))
+			for i, g := range jikanData.Genres {
+				a.Metadata.Genres[i] = g.Name
+			}
+			if jikanData.Images.Jpg.LargeImageURL != "" {
+				a.Metadata.Cover.ExtraLarge = jikanData.Images.Jpg.LargeImageURL
+				a.Metadata.Cover.Large = jikanData.Images.Jpg.LargeImageURL
+			}
+			a.Metadata.Cover.Medium = jikanData.Images.Jpg.ImageURL
 			return nil
 		}
+		log.Warnf("Jikan search failed for %s: %v — falling back to AniList", a.Name, err)
 	}
 
 	progress("Fetching metadata from anilist")

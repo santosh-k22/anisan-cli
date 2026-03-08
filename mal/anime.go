@@ -1,7 +1,7 @@
 // Package mal provides a client for the MyAnimeList REST API.
 package mal
 
-// Anime represents an anime entry from the MyAnimeList REST API.
+// Anime represents high-level metadata for a MyAnimeList record, used for display and synchronization.
 type Anime struct {
 	ID          int    `json:"id"`
 	Title       string `json:"title"`

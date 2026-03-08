@@ -72,8 +72,8 @@ When using the json flag anime selector could be omitted. That way, it will sele
 	PreRun: func(cmd *cobra.Command, args []string) {
 		json, _ := cmd.Flags().GetBool("json")
 
-		if !json {
-			lo.Must0(cmd.MarkFlagRequired("anime"))
+		if !json && !cmd.Flags().Changed("anime") {
+			handleErr(errors.New("the --anime flag is required when not outputting to JSON"))
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
@@ -149,6 +149,92 @@ func init() {
 var inlineAnilistCmd = &cobra.Command{
 	Use:   "anilist",
 	Short: "Manage Anilist record operations in inline mode",
+}
+
+func init() {
+	inlineAnilistCmd.AddCommand(inlineAnilistSearchCmd)
+
+	inlineAnilistSearchCmd.Flags().StringP("name", "n", "", "The anime title to search for on Anilist")
+	inlineAnilistSearchCmd.Flags().IntP("id", "i", 0, "The specific Anilist ID to retrieve metadata for")
+
+	inlineAnilistSearchCmd.MarkFlagsMutuallyExclusive("name", "id")
+}
+
+var inlineAnilistSearchCmd = &cobra.Command{
+	Use:   "search",
+	Short: "Perform an Anilist search by anime title and return the results",
+	PreRun: func(cmd *cobra.Command, args []string) {
+		if !cmd.Flags().Changed("name") && !cmd.Flags().Changed("id") {
+			handleErr(errors.New("name or id flag is required"))
+		}
+	},
+	Run: func(cmd *cobra.Command, args []string) {
+		animeName := lo.Must(cmd.Flags().GetString("name"))
+		animeId := lo.Must(cmd.Flags().GetInt("id"))
+
+		var toEncode any
+
+		if animeName != "" {
+			animes, err := anilist.SearchByName(animeName)
+			handleErr(err)
+			toEncode = animes
+		} else {
+			anime, err := anilist.GetByID(animeId)
+			handleErr(err)
+			toEncode = anime
+		}
+
+		handleErr(json.NewEncoder(os.Stdout).Encode(toEncode))
+	},
+}
+
+func init() {
+	inlineAnilistCmd.AddCommand(inlineAnilistGetCmd)
+
+	inlineAnilistGetCmd.Flags().StringP("name", "n", "", "The local anime name to retrieve the mapped Anilist relation for")
+	lo.Must0(inlineAnilistGetCmd.MarkFlagRequired("name"))
+}
+
+var inlineAnilistGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Retrieve the Anilist record currently associated with a specific local anime title",
+	Run: func(cmd *cobra.Command, args []string) {
+		name := lo.Must(cmd.Flags().GetString("name"))
+		a := anilist.GetCachedRelation(name)
+
+		if a == nil {
+			anime, err := anilist.FindClosest(name)
+			handleErr(err)
+			a = anime
+		}
+
+		handleErr(json.NewEncoder(os.Stdout).Encode(a))
+	},
+}
+
+func init() {
+	inlineAnilistCmd.AddCommand(inlineAnilistBindCmd)
+
+	inlineAnilistBindCmd.Flags().StringP("name", "n", "", "The local anime title to establish a mapping for")
+	inlineAnilistBindCmd.Flags().IntP("id", "i", 0, "The Anilist ID to bind to the specified anime title")
+
+	lo.Must0(inlineAnilistBindCmd.MarkFlagRequired("name"))
+	lo.Must0(inlineAnilistBindCmd.MarkFlagRequired("id"))
+
+	inlineAnilistBindCmd.MarkFlagsRequiredTogether("name", "id")
+}
+
+var inlineAnilistBindCmd = &cobra.Command{
+	Use:   "set",
+	Short: "Statically bind a local anime title to a specific Anilist record ID",
+	Run: func(cmd *cobra.Command, args []string) {
+		anilistAnime, err := anilist.GetByID(lo.Must(cmd.Flags().GetInt("id")))
+		handleErr(err)
+
+		animeName := lo.Must(cmd.Flags().GetString("name"))
+
+		handleErr(anilist.SetRelation(animeName, anilistAnime))
+	},
 }
 
 func init() {

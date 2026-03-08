@@ -41,15 +41,14 @@ func GetCachedRelation(name string) *Anime {
 	return nil
 }
 
-// FindClosest returns the closest anime to the given name.
-// It will levenshtein compare the given name with all the anime names in the cache.
+// FindClosest identifies the most relevant MyAnimeList record by calculating the Levenshtein distance against the local title cache.
 func FindClosest(name string) (*Anime, error) {
 	name = normalizedName(name)
 	return findClosest(name, name, 0, 3)
 }
 
-// findClosest returns the closest anime to the given name.
-// It will levenshtein compare the given name with all the anime names in the cache.
+// findClosest performs a fuzzy search for the closest anime to the given name,
+// using Levenshtein distance for comparison against cached anime titles.
 func findClosest(name, originalName string, try, limit int) (*Anime, error) {
 	enforceRateLimit()
 

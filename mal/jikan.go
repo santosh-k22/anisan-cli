@@ -15,7 +15,7 @@ var (
 	jikanLastCall time.Time
 )
 
-// enforceRateLimit guarantees we do not exceed Jikan v4's 3 requests/second limit.
+// enforceRateLimit synchronizes calls to ensure compliance with Jikan v4's 3 requests/second throughput constraint.
 func enforceRateLimit() {
 	jikanMu.Lock()
 	defer jikanMu.Unlock()

@@ -26,12 +26,12 @@ import (
 	"github.com/spf13/viper"
 )
 
-// statefulBubble encapsulates the comprehensive application state, including component models and workflow tracking.
+// statefulBubble represents the main TUI model, coordinating components and state transitions.
 type statefulBubble struct {
 	state         state
 	statesHistory util.Stack[state]
 	loading       bool
-	busy          bool // Protects against rapid input during async ops
+	busy          bool // busy prevents rapid input processing during asynchronous operations
 
 	keymap *statefulKeymap
 
@@ -46,12 +46,12 @@ type statefulBubble struct {
 	postWatchC list.Model
 	progressC  progress.Model
 	helpC      help.Model
-	idInputC   textinput.Model // For manual MAL/Anilist ID override
+	idInputC   textinput.Model // idInputC handles manual overrides for MyAnimeList or AniList IDs
 
 	selectedProviders map[*provider.Provider]struct{}
 	selectedSources   []source.Source
 	selectedAnime     *source.Anime
-	selectedEpisodes  map[*source.Episode]struct{} // set
+	selectedEpisodes  map[*source.Episode]struct{} // Set of episodes selected for batch operations
 
 	sourcesLoadedChannel        chan []source.Source
 	foundAnimesChannel          chan []*source.Anime
@@ -66,8 +66,8 @@ type statefulBubble struct {
 	currentPlayingEpisode *source.Episode
 	nextEpisodeToPlay     *source.Episode // Queued episode for seamless transitions
 	mpvPlayer             player.Player
-	trackerName           string // Store linked anime name
-	trackerURL            string // Store linked anime url
+	trackerName           string // Canonical title on the tracking service (AniList/MAL)
+	trackerURL            string // Direct URL to the anime record on the tracking service
 	lastError             error
 
 	width, height    int
@@ -75,6 +75,7 @@ type statefulBubble struct {
 
 	coverArtString string            // ANSI-rendered raster data for the currently highlighted item
 	imageMode      render.RenderMode // Evaluated terminal capability for image rendering
+	imageColWidth  int               // Fixed horizontal constraint for the side-pane image container
 
 	options *Options
 }
@@ -117,7 +118,6 @@ func (b *statefulBubble) previousState() {
 	}
 }
 
-// resize propagates terminal dimension changes to all child component models.
 func (b *statefulBubble) resize(width, height int) {
 	x, y := paddingStyle.GetFrameSize()
 	xx, yy := listExtraPaddingStyle.GetFrameSize()
@@ -125,7 +125,14 @@ func (b *statefulBubble) resize(width, height int) {
 	styledWidth := width - x
 	styledHeight := height - y
 
-	listWidth := width - xx
+	b.width = styledWidth
+	b.height = styledHeight
+
+	// Compute image constraints dynamically.
+	imgW, _ := b.getDynamicImageSize()
+	b.imageColWidth = imgW + 4 // Account for lipgloss horizontal padding (2 left, 2 right)
+
+	listWidth := width - xx - b.imageColWidth // Constrain lists so they don't overlap the fixed right pane
 	listHeight := height - yy
 
 	b.historyC.SetSize(listWidth, listHeight)
@@ -254,9 +261,6 @@ func newBubble(options *Options) *statefulBubble {
 	bubble.idInputC.CharLimit = 20
 	bubble.idInputC.Prompt = "MAL/Anilist ID: "
 
-	bubble.historyC = makeList("History", true, &listOptions{PinkStyle: true})
-	bubble.historyC.SetFilteringEnabled(true)
-
 	bubble.sourcesC = makeList("Anime Sources", false, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.AccentColor).Padding(0, 1),
@@ -273,12 +277,13 @@ func newBubble(options *Options) *statefulBubble {
 
 	bubble.options = options
 
-	bubble.historyC = makeList("History", false, &listOptions{
+	bubble.historyC = makeList("History", true, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.Yellow).Padding(0, 1),
 		),
 	})
 	bubble.historyC.SetStatusBarItemName("entry", "entries")
+	bubble.historyC.SetFilteringEnabled(true)
 
 	bubble.episodesC = makeList("Episodes", true, &listOptions{
 		TitleStyle: mo.Some(

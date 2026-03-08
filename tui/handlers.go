@@ -56,6 +56,30 @@ func (b *statefulBubble) loadProviders() tea.Cmd {
 	return b.sourcesC.SetItems(append(items, customItems...))
 }
 
+// metadataPopulatedMsg is sent by batchPopulateMetadata after each anime's metadata has been fetched.
+// Delivering this through the Bubbletea event loop triggers a proper UI re-render.
+type metadataPopulatedMsg struct {
+	anime *source.Anime
+}
+
+// batchPopulateMetadata concurrently fetches metadata for up to the first N animes in the list.
+// Each result is delivered as a metadataPopulatedMsg tea.Cmd so the description row re-renders.
+func (b *statefulBubble) batchPopulateMetadata(animes []*source.Anime) tea.Cmd {
+	limit := len(animes)
+	if limit > 10 {
+		limit = 10 // Eagerly enrich the first page of visible results
+	}
+	cmds := make([]tea.Cmd, limit)
+	for i, anime := range animes[:limit] {
+		anime := anime // capture for closure
+		cmds[i] = func() tea.Msg {
+			_ = anime.PopulateMetadata(func(string) {})
+			return metadataPopulatedMsg{anime: anime}
+		}
+	}
+	return tea.Batch(cmds...)
+}
+
 func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
 	// Retrieve local history records and sort chronologically for display.
 	saved, err := history.Get()
@@ -89,24 +113,22 @@ func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
 		for name, eps := range nameMap {
 			var meta *source.Metadata
 			if backend == "mal" {
-				// Find closest MAL match and convert to generalized Metadata
+				// Retrieve the closest MyAnimeList result and map it to the generalized Metadata schema.
 				if res, err := mal.SearchAnime(name); err == nil && len(res) > 0 {
 					m := res[0]
 					meta = &source.Metadata{
 						Title:    m.Title,
-						Status:   m.Status, // Requires mapping MAL status strings if they differ
+						Status:   m.Status,
 						Episodes: m.NumEpisodes,
 					}
-					// MAL Mean is typically out of 10.0, normalize to 100 if your UI expects it
 					if m.Mean > 0 {
 						meta.Score = int(m.Mean * 10)
 					}
 				}
 			} else {
-				// Find closest Anilist match
+				// Retrieve the closest AniList result and map it to the generalized Metadata schema.
 				al, err := anilist.FindClosest(name)
 				if err == nil && al != nil {
-					// Convert Anilist to generalized Metadata
 					meta = &source.Metadata{
 						Title:    al.Name(),
 						Status:   al.Status,
@@ -122,6 +144,7 @@ func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
 					}
 				}
 			}
+
 			if meta != nil {
 				for _, ep := range eps {
 					ep.Metadata = meta
@@ -304,7 +327,7 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 			totalEps  int
 		)
 		backend := viper.GetString("tracker.backend")
-		// Rapid Cache Resolution to prevent UI blocking
+		// Rapid Cache Resolution: Prioritize local relation mappings to minimize blocking on network I/O.
 		if backend == "mal" {
 			if m := mal.GetCachedRelation(episode.Anime.Name); m != nil {
 				malID = m.ID

@@ -56,7 +56,7 @@ func DeleteToken() error {
 	return keyring.Delete(keyringService, keyringUser)
 }
 
-// GeneratePKCE creates a 128-byte securely randomized Code Challenge for MAL OAuth2.
+// GeneratePKCE creates a 128-byte securely randomized Code Challenge for the MyAnimeList OAuth2 PKCE flow.
 func GeneratePKCE() (string, error) {
 	b := make([]byte, 128)
 	if _, err := rand.Read(b); err != nil {
@@ -66,7 +66,7 @@ func GeneratePKCE() (string, error) {
 	return strings.TrimRight(base64.URLEncoding.EncodeToString(b), "="), nil
 }
 
-// ExchangeToken performs the OAuth2 code exchange using the PKCE verifier.
+// ExchangeToken performs the OAuth2 code exchange using the PKCE verifier to retrieve the initial access and refresh tokens.
 func ExchangeToken(authCode, codeVerifier string) error {
 	clientID := viper.GetString("tracker.mal.client_id")
 	if clientID == "" {

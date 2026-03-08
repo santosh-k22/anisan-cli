@@ -76,7 +76,7 @@ func (f *Field) typeName() string {
 	}
 }
 
-// Default holds the map of all configuration fields.
+// Default specifies the factory configuration settings, including tracking backends, media providers, and player preferences.
 var Default = make(map[string]Field)
 
 // EnvExposed holds keys that are bound to environment variables.

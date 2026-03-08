@@ -38,6 +38,7 @@ See https://github.com/anisan-cli/anisan/wiki/Anilist-Integration for more infor
 			viper.Set(key.TrackerAnilistToken, "")
 			log.Info("Anilist integration disabled")
 			handleErr(viper.WriteConfig())
+			return
 		}
 
 		if !viper.GetBool(key.TrackerEnable) {

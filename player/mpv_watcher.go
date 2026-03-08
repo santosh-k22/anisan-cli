@@ -12,8 +12,7 @@ import (
 	"github.com/anisan-cli/anisan/internal/tracker"
 )
 
-// MPVWatcher manages an IPC bridge to an external mpv instance to monitor
-// and synchronize playback state with the active media trackers.
+// MPVWatcher monitors the MPV player's state via IPC, facilitating real-time status updates and event synchronization.
 type MPVWatcher struct {
 	socketPath    string
 	mediaTracker  tracker.MediaTracker

@@ -45,7 +45,7 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 }
 
-// configCmd serves as the parent command for managing application configuration.
+// configCmd serves as the parent command for managing application configuration via a key-value interface.
 var configCmd = &cobra.Command{
 	Use:   "config",
 	Short: "Manage application configuration settings and defaults",
@@ -60,7 +60,7 @@ func init() {
 	configInfoCmd.SetOut(os.Stdout)
 }
 
-// configInfoCmd displays metadata and descriptions for configuration fields.
+// configInfoCmd displays metadata, descriptions, and current values for configuration fields.
 var configInfoCmd = &cobra.Command{
 	Use:   "info",
 	Short: "Display detailed information and descriptions for specified configuration fields",
@@ -106,8 +106,11 @@ var configInfoCmd = &cobra.Command{
 
 func init() {
 	configCmd.AddCommand(configSetCmd)
-	configSetCmd.Flags().StringSliceP("value", "v", []string{}, "The new value to assign to the configuration key")
 
+	// Add these two lines to register the key flag and its autocomplete
+	configSetCmd.Flags().StringP("key", "k", "", "The configuration key to update")
+	_ = configSetCmd.RegisterFlagCompletionFunc("key", completionConfigKeys)
+	configSetCmd.Flags().StringSliceP("value", "v", []string{}, "The new value to assign to the configuration key")
 	// Deprecated flags retained for backward compatibility.
 	configSetCmd.Flags().BoolP("bool", "b", false, "Explicitly interpret the value as a boolean (Legacy)")
 	configSetCmd.Flags().IntP("int", "i", 0, "Explicitly interpret the value as an integer (Legacy)")
