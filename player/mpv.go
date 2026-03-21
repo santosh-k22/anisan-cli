@@ -38,29 +38,12 @@ func NewMPV() *MPV {
 
 // Play starts playback of the given URL. If mpv is already running,
 // it loads the new file into the existing instance via IPC.
+// Play starts playback of the given URL. If mpv is already running,
+// it loads the new file into the existing instance via IPC.
 func (m *MPV) Play(rawURL string, title string, headers map[string]string) error {
-	// Sanitize the URL to prevent flag injection from Lua scripts
-	safeURL, err := sanitizeMediaTarget(rawURL)
+	args, err := m.buildArgs(rawURL, title, headers, false)
 	if err != nil {
-		return fmt.Errorf("invalid media target: %w", err)
-	}
-
-	// Sanitize title to prevent IPC issues
-	safeTitle := sanitizeTitle(title)
-
-	// Construct header string if present
-	var headerString string
-	if len(headers) > 0 {
-		var hBuilder strings.Builder
-		for k, v := range headers {
-			if hBuilder.Len() > 0 {
-				hBuilder.WriteString(",")
-			}
-			// Replace commas in values if any (simple sanitization)
-			val := strings.ReplaceAll(v, ",", "%2C")
-			hBuilder.WriteString(fmt.Sprintf("%s: %s", k, val))
-		}
-		headerString = hBuilder.String()
+		return err
 	}
 
 	if m.socketPath == "" {
@@ -71,24 +54,7 @@ func (m *MPV) Play(rawURL string, title string, headers map[string]string) error
 		m.socketPath = filepath.Join(os.TempDir(), fmt.Sprintf("anisan-%x.sock", randomBytes))
 	}
 
-	// Build mpv arguments.
-	// CRUCIAL: Pass ONLY the socket, title, and URL.
-	// Do NOT pass --vo, --profile, --hwdec — respect user's mpv.conf.
-	args := []string{
-		"--no-terminal",
-		"--really-quiet",
-		fmt.Sprintf("--input-ipc-server=%s", m.socketPath),
-		fmt.Sprintf("--force-media-title=%s", safeTitle),
-		fmt.Sprintf("--title=%s", safeTitle), // Some mpv builds only respect --title
-		"--force-window=yes",
-		"--idle=yes",
-	}
-
-	if headerString != "" {
-		args = append(args, fmt.Sprintf("--http-header-fields=%s", headerString))
-	}
-
-	args = append(args, safeURL)
+	args[2] = fmt.Sprintf("--input-ipc-server=%s", m.socketPath)
 
 	m.cmd = exec.Command("mpv", args...)
 
@@ -381,4 +347,67 @@ func sanitizeTitle(title string) string {
 	// Remove null bytes
 	t = strings.ReplaceAll(t, "\x00", "")
 	return strings.TrimSpace(t)
+}
+func (m *MPV) buildArgs(rawURL string, title string, headers map[string]string, sync bool) ([]string, error) {
+	// Sanitize the URL to prevent flag injection from Lua scripts
+	safeURL, err := sanitizeMediaTarget(rawURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid media target: %w", err)
+	}
+
+	// Sanitize title to prevent IPC issues
+	safeTitle := sanitizeTitle(title)
+
+	// Construct header string if present
+	var headerString string
+	if len(headers) > 0 {
+		var hBuilder strings.Builder
+		for k, v := range headers {
+			if hBuilder.Len() > 0 {
+				hBuilder.WriteString(",")
+			}
+			// Replace commas in values if any (simple sanitization)
+			val := strings.ReplaceAll(v, ",", "%2C")
+			hBuilder.WriteString(fmt.Sprintf("%s: %s", k, val))
+		}
+		headerString = hBuilder.String()
+	}
+
+	var args []string
+	if sync {
+		args = append(args, "--terminal", "--quiet")
+	} else {
+		args = append(args, "--no-terminal", "--really-quiet")
+	}
+	args = append(args,
+		"--input-ipc-server=",
+		fmt.Sprintf("--force-media-title=%s", safeTitle),
+		fmt.Sprintf("--title=%s", safeTitle),
+		"--force-window=yes",
+		"--idle=yes",
+	)
+
+	if headerString != "" {
+		args = append(args, fmt.Sprintf("--http-header-fields=%s", headerString))
+	}
+
+	args = append(args, safeURL)
+	return args, nil
+}
+
+// PlaySync starts playback synchronously and blocks until the player process exits.
+// This yields the TTY to the mpv process (essential for tea.Suspend handoffs).
+func (m *MPV) PlaySync(rawURL string, title string, headers map[string]string) error {
+	args, err := m.buildArgs(rawURL, title, headers, true)
+	if err != nil {
+		return err
+	}
+
+	m.cmd = exec.Command("mpv", args...)
+	m.cmd.SysProcAttr = sysProcAttr()
+	m.cmd.Stdout = os.Stdout
+	m.cmd.Stderr = os.Stderr
+	m.cmd.Stdin = os.Stdin
+
+	return m.cmd.Run()
 }

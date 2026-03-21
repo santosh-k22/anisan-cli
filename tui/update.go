@@ -4,6 +4,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"io"
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
@@ -21,12 +22,14 @@ import (
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/mal"
 	"github.com/anisan-cli/anisan/open"
+	"github.com/anisan-cli/anisan/player"
 	"github.com/anisan-cli/anisan/provider"
 	"github.com/anisan-cli/anisan/query"
 	"github.com/anisan-cli/anisan/source"
 	"github.com/anisan-cli/anisan/style"
 	bubblesKey "github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
@@ -34,6 +37,33 @@ import (
 	"github.com/samber/lo"
 	"github.com/spf13/viper"
 )
+
+type searchDebounceMsg struct {
+	id    int
+	query string
+}
+
+type playSyncMsg struct {
+	url     string
+	title   string
+	headers map[string]string
+}
+
+// playbackCmd implements tea.ExecCommand for seamless terminal handoff.
+type playbackCmd struct {
+	player  player.Player
+	url     string
+	title   string
+	headers map[string]string
+}
+
+func (p playbackCmd) Run() error {
+	return p.player.PlaySync(p.url, p.title, p.headers)
+}
+
+func (p playbackCmd) SetStdin(r io.Reader)  {}
+func (p playbackCmd) SetStdout(w io.Writer) {}
+func (p playbackCmd) SetStderr(w io.Writer) {}
 
 func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
@@ -55,6 +85,28 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return b, cmd
+	case spinner.TickMsg:
+		var cmd tea.Cmd
+		b.spinnerC, cmd = b.spinnerC.Update(msg)
+		return b, cmd
+	case playSyncMsg:
+		return b, tea.Exec(playbackCmd{
+			player:  b.mpvPlayer,
+			url:     msg.url,
+			title:   msg.title,
+			headers: msg.headers,
+		}, func(err error) tea.Msg {
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+	case searchDebounceMsg:
+		if msg.id == b.lastSearchID && msg.query != "" {
+			go query.Remember(msg.query, 1)
+			return b, tea.Batch(b.startLoading(), b.searchAnime(msg.query), b.waitForAnimes(), b.spinnerC.Tick)
+		}
+		return b, nil
 	case *mal.Anime:
 		return b, b.applyManualTrackerUpdate(msg)
 	case *anilist.Anime:
@@ -72,7 +124,35 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		b.hideNotification()
 		return b, nil
 	case tea.WindowSizeMsg:
-		b.resize(msg.Width, msg.Height)
+		return b, b.resize(msg.Width, msg.Height)
+	case tea.MouseMsg:
+		if msg.Type == tea.MouseWheelUp || msg.Type == tea.MouseWheelDown {
+			var l *list.Model
+			switch b.state {
+			case historyState:
+				l = &b.historyC
+			case sourcesState:
+				l = &b.sourcesC
+			case animesState:
+				l = &b.animesC
+			case episodesState:
+				l = &b.episodesC
+			case trackerSelectState:
+				l = &b.trackerC
+			case postWatchState:
+				l = &b.postWatchC
+			}
+			if l != nil {
+				if msg.Type == tea.MouseWheelUp {
+					l.CursorUp()
+				} else {
+					l.CursorDown()
+				}
+				// After scrolling, also update the high-level bubble state (like fetching cover art)
+				// by manually triggering the logic that normally follows keyboard navigation.
+				return b, nil
+			}
+		}
 	case tea.KeyMsg:
 		switch {
 		case bubblesKey.Matches(msg, b.keymap.forceQuit):
@@ -557,6 +637,8 @@ func (b *statefulBubble) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			b.newState(sourcesState)
 			return b, b.loadProviders()
 		case bubblesKey.Matches(msg, b.keymap.confirm) && b.inputC.Value() != "":
+			// Manual confirmation still works as an instant override
+			b.lastSearchID++
 			b.progressStatus = fmt.Sprintf("Searching for %s...", b.inputC.Value())
 			b.startLoading()
 			b.newState(loadingState)
@@ -566,6 +648,13 @@ func (b *statefulBubble) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if s := b.inputC.AvailableSuggestions(); len(s) > 0 {
 				b.inputC.SetValue(s[0])
 				b.inputC.SetCursor(len(b.inputC.Value()))
+				// Trigger periodic debounce for accepted suggestions too
+				b.lastSearchID++
+				id := b.lastSearchID
+				val := b.inputC.Value()
+				return b, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
+					return searchDebounceMsg{id: id, query: val}
+				})
 			}
 			return b, nil
 		case bubblesKey.Matches(msg, b.keymap.back):
@@ -574,7 +663,18 @@ func (b *statefulBubble) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
+	oldVal := b.inputC.Value()
 	b.inputC, cmd = b.inputC.Update(msg)
+	newVal := b.inputC.Value()
+
+	if newVal != oldVal && newVal != "" {
+		b.lastSearchID++
+		id := b.lastSearchID
+		return b, tea.Batch(cmd, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
+			return searchDebounceMsg{id: id, query: newVal}
+		}))
+	}
+
 	return b, cmd
 }
 
@@ -1200,6 +1300,11 @@ func (b *statefulBubble) updateManualID(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 type coverArtMsg string
 
+type cachedArt struct {
+	img     image.Image
+	summary string
+}
+
 func (b *statefulBubble) getDynamicImageSize() (int, int) {
 	// Dynamically compute layout dimensions based on terminal properties. Follow subtractive/clean specs.
 	targetWidth := b.width / 4
@@ -1222,32 +1327,61 @@ func (b *statefulBubble) getDynamicImageSize() (int, int) {
 
 func (b *statefulBubble) fetchCoverArtFromURL(url string, summary string) tea.Cmd {
 	return func() tea.Msg {
-		var ansii string
+		var (
+			img   image.Image
+			ansii string
+		)
 
 		if url != "" {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
+			// Check memory cache first to protect API limits and prevent thumbnail flickering
+			if val, ok := b.coverArtCache.Load(url); ok {
+				if cached, ok := val.(*cachedArt); ok {
+					img = cached.img
+					// If the summary is provided but the cache doesn't have it, update it
+					if summary != "" && cached.summary == "" {
+						cached.summary = summary
+					}
+					// If the summary is not provided, use the cached one
+					if summary == "" {
+						summary = cached.summary
+					}
+				}
+			}
 
-			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-			if err == nil {
-				client := &http.Client{Timeout: 5 * time.Second}
-				resp, err := client.Do(req)
+			// If cache miss, fetch and decode asynchronously
+			if img == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+
+				req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 				if err == nil {
-					defer resp.Body.Close()
-					if resp.StatusCode == http.StatusOK {
-						img, _, err := image.Decode(resp.Body)
-						if err == nil {
-							w, h := b.getDynamicImageSize()
-							ansii = render.RenderCoverArt(img, uint(w), uint(h), b.imageMode)
+					resp, err := b.httpClient.Do(req)
+					if err == nil {
+						defer resp.Body.Close()
+						if resp.StatusCode == http.StatusOK {
+							if decoded, _, err := image.Decode(resp.Body); err == nil {
+								img = decoded
+								// Persist to RAM cache for subsequent O(1) retrieval
+								b.coverArtCache.Store(url, &cachedArt{
+									img:     img,
+									summary: summary,
+								})
+							}
 						}
 					}
 				}
 			}
 		}
 
+		// Perform ANSI rendering based on the LATEST terminal dimensions
+		if img != nil {
+			w, h := b.getDynamicImageSize()
+			ansii = render.RenderCoverArt(img, uint(w), uint(h), b.imageMode)
+		}
+
+		// Responsive Typography Reflow: Soft-wrap the synopsis using glamour and dynamic .Width()
 		if summary != "" {
 			w, _ := b.getDynamicImageSize()
-			// Account for imageColWidth constraints and lipgloss paddings structurally
 			r, err := glamour.NewTermRenderer(
 				glamour.WithAutoStyle(),
 				glamour.WithWordWrap(w+2),

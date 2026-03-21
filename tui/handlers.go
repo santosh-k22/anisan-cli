@@ -2,7 +2,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,10 +10,8 @@ import (
 	"runtime"
 
 	"github.com/anisan-cli/anisan/anilist"
-	"github.com/anisan-cli/anisan/aniskip"
 	"github.com/anisan-cli/anisan/color"
 	"github.com/anisan-cli/anisan/history"
-	"github.com/anisan-cli/anisan/internal/tracker"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/log"
 	"github.com/anisan-cli/anisan/mal"
@@ -328,43 +325,6 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 		log.Infof("Playing %s via mpv IPC", title)
 		b.progressStatus = fmt.Sprintf("Launching %s", style.Fg(color.Purple)(title))
 
-		var (
-			skipTimes *aniskip.SkipTimes
-			anilistID int
-			malID     int
-			totalEps  int
-		)
-		backend := viper.GetString("tracker.backend")
-		// Rapid Cache Resolution: Prioritize local relation mappings to minimize blocking on network I/O.
-		if backend == "mal" {
-			if m := mal.GetCachedRelation(episode.Anime.Name); m != nil {
-				malID = m.ID
-				totalEps = m.NumEpisodes
-			} else if res, err := mal.FindClosest(episode.Anime.Name); err == nil {
-				malID = res.ID
-				totalEps = res.NumEpisodes
-			}
-		} else {
-			if al, err := anilist.FindClosest(episode.Anime.Name); err == nil {
-				anilistID = al.ID
-				malID = al.IDMal
-				totalEps = al.Episodes
-			}
-		}
-		// Aniskip execution (strictly requires MAL ID)
-		if viper.GetBool(key.Aniskip) {
-			resolvedMalID := b.resolveMalID(episode.Anime.Name)
-			if resolvedMalID != 0 {
-				log.Infof("Fetching skip times for MAL ID %d Episode %d", resolvedMalID, episode.Index)
-				skipTimes, _ = aniskip.GetSkipTimes(resolvedMalID, int(episode.Index))
-				if skipTimes != nil {
-					log.Infof("Skip times found: Intro %v-%v, Outro %v-%v", skipTimes.Opening.Start, skipTimes.Opening.End, skipTimes.Ending.Start, skipTimes.Ending.End)
-				}
-			} else {
-				log.Warn("MAL ID not found, skipping intro skip fetch.")
-			}
-		}
-
 		if b.mpvPlayer == nil {
 			if viper.GetString(key.Player) == "iina" && runtime.GOOS == "darwin" {
 				b.mpvPlayer = player.NewIINA()
@@ -394,68 +354,12 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 			}
 		}
 
-		err = b.mpvPlayer.Play(videoURL, title, headers)
-		if err != nil {
-			log.Errorf("failed to play episode: %v", err)
-			b.errorChannel <- fmt.Errorf("mpv playback failed: %w", err)
-			return nil
+		b.stopLoading()
+		return playSyncMsg{
+			url:     videoURL,
+			title:   title,
+			headers: headers,
 		}
-
-		var maxPercentage float64
-
-		// Technical Note: AniSkip and IPC monitoring are exclusive to the MPV player implementation.
-		if mpvPlayer, isMPV := b.mpvPlayer.(*player.MPV); isMPV {
-			// Initialize the skipper with fetched times (if any)
-			skipper := player.NewSkipper(mpvPlayer, skipTimes)
-			if err := skipper.ApplyChapters(); err != nil {
-				log.Warnf("Failed to apply chapters: %v", err)
-			}
-
-			b.mpvPlayer.StopIPCTicker()
-
-			// Instantiate the resolved tracking backend.
-			activeTracker := tracker.InitializeTracker()
-			// Resolve the canonical media identifier for the active tracking backend.
-			var trackerMediaID = anilistID
-			if viper.GetString(key.TrackerBackend) == "mal" {
-				trackerMediaID = malID
-			}
-
-			if trackerMediaID != 0 {
-				ctx, cancel := context.WithCancel(context.Background())
-				defer cancel()
-
-				// Launch the decoupled IPC watcher to monitor playback progress asynchronously.
-				watcher := player.NewMPVWatcher(mpvPlayer.Socket(), activeTracker, trackerMediaID, int(episode.Index), totalEps)
-				go func() {
-					if err := watcher.Poll(ctx); err != nil && err != context.Canceled {
-						log.Warnf("IPC watcher terminated: %v", err)
-					}
-				}()
-			}
-
-			b.mpvPlayer.StartIPCTicker(func(pos, dur int) {
-				if dur > 0 {
-					p := (float64(pos) / float64(dur)) * 100.0
-					if p > maxPercentage {
-						maxPercentage = p
-					}
-				}
-
-				// Monitor playback position for automated intro/outro skipping.
-
-				if _, err := skipper.Check(float64(pos)); err != nil {
-					log.Warnf("Skipper check failed: %v", err)
-				}
-			})
-		} else {
-			// For non-IPC players like IINA, we just assume it was fully watched
-			// if the application was cleanly launched and executed to completion.
-			maxPercentage = 100.0
-		}
-
-		log.Infof("mpv launched on socket %s", b.mpvPlayer.Socket())
-		return b.waitForMpvExit(&maxPercentage)()
 	}
 }
 

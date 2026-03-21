@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"strings"
 
 	"github.com/anisan-cli/anisan/key"
 	"github.com/spf13/viper"
@@ -25,32 +26,10 @@ func NewIINA() *IINA {
 }
 
 func (m *IINA) Play(rawURL string, title string, headers map[string]string) error {
-	if runtime.GOOS != "darwin" {
-		return fmt.Errorf("IINA is only supported on macOS")
+	args, err := m.buildArgs(rawURL, title, headers)
+	if err != nil {
+		return err
 	}
-
-	args := []string{"-a", "IINA"}
-
-	// IINA accepts mpv-specific arguments via the '--args' flag separator.
-	if viper.GetBool(key.Aniskip) {
-		args = append(args, "--args", fmt.Sprintf("--mpv-force-media-title=%s", title))
-	} else {
-		args = append(args, "--args", fmt.Sprintf("--force-media-title=%s", title))
-	}
-
-	// Headers
-	if len(headers) > 0 {
-		var hBuilder string
-		for k, v := range headers {
-			if len(hBuilder) > 0 {
-				hBuilder += ","
-			}
-			hBuilder += fmt.Sprintf("%s: %s", k, v)
-		}
-		args = append(args, fmt.Sprintf("--http-header-fields=%s", hBuilder))
-	}
-
-	args = append(args, rawURL)
 
 	m.cmd = exec.Command("open", args...)
 
@@ -65,6 +44,50 @@ func (m *IINA) Play(rawURL string, title string, headers map[string]string) erro
 	}()
 
 	return nil
+}
+
+// PlaySync starts playback synchronously and blocks until the player process exits.
+func (m *IINA) PlaySync(rawURL string, title string, headers map[string]string) error {
+	args, err := m.buildArgs(rawURL, title, headers)
+	if err != nil {
+		return err
+	}
+
+	// Add the -W flag to wait for the application to exit.
+	args = append([]string{"-W"}, args...)
+
+	m.cmd = exec.Command("open", args...)
+	return m.cmd.Run()
+}
+
+func (m *IINA) buildArgs(rawURL string, title string, headers map[string]string) ([]string, error) {
+	if runtime.GOOS != "darwin" {
+		return nil, fmt.Errorf("IINA is only supported on macOS")
+	}
+
+	args := []string{"-a", "IINA"}
+
+	// IINA accepts mpv-specific arguments via the '--args' flag separator.
+	if viper.GetBool(key.Aniskip) {
+		args = append(args, "--args", fmt.Sprintf("--mpv-force-media-title=%s", title))
+	} else {
+		args = append(args, "--args", fmt.Sprintf("--force-media-title=%s", title))
+	}
+
+	// Headers
+	if len(headers) > 0 {
+		var hBuilder strings.Builder
+		for k, v := range headers {
+			if hBuilder.Len() > 0 {
+				hBuilder.WriteString(",")
+			}
+			hBuilder.WriteString(fmt.Sprintf("%s: %s", k, v))
+		}
+		args = append(args, fmt.Sprintf("--http-header-fields=%s", hBuilder.String()))
+	}
+
+	args = append(args, rawURL)
+	return args, nil
 }
 
 func (m *IINA) Wait() <-chan struct{} {

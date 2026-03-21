@@ -6,6 +6,10 @@ type Player interface {
 	// If a player instance is already running, it loads the new file into it.
 	Play(url string, title string, headers map[string]string) error
 
+	// PlaySync starts playback synchronously and blocks until the player process exits.
+	// This yields the TTY to the subprocess (essential for tea.Suspend handoffs).
+	PlaySync(url string, title string, headers map[string]string) error
+
 	// TogglePause inverts the current playback suspension state.
 	TogglePause() error
 

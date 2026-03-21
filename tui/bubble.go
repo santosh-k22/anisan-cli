@@ -3,9 +3,12 @@ package tui
 
 import (
 	"fmt"
+	"net/http"
+	"sync"
 	"time"
 
 	"github.com/anisan-cli/anisan/constant"
+	"github.com/anisan-cli/anisan/history"
 	"github.com/anisan-cli/anisan/internal/ui/render"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/player"
@@ -47,8 +50,21 @@ type statefulBubble struct {
 	postWatchC list.Model
 	progressC  progress.Model
 	helpC      help.Model
-	timerC     timer.Model
 	idInputC   textinput.Model // idInputC handles manual overrides for MyAnimeList or AniList IDs
+	timerC     timer.Model
+	httpClient *http.Client
+
+	// cache
+	coverArtCache sync.Map
+
+	// delegates
+	historyD   list.DefaultDelegate
+	sourcesD   list.DefaultDelegate
+	animesD    list.DefaultDelegate
+	episodesD  list.DefaultDelegate
+	trackerD   list.DefaultDelegate
+	postWatchD list.DefaultDelegate
+	lastSearchID int
 
 	selectedProviders map[*provider.Provider]struct{}
 	selectedSources   []source.Source
@@ -76,6 +92,7 @@ type statefulBubble struct {
 	coverArtString  string            // ANSI-rendered raster data for the currently highlighted item
 	imageMode       render.RenderMode // Evaluated terminal capability for image rendering
 	imageColWidth   int               // Fixed horizontal constraint for the side-pane image container
+	narrow          bool              // narrow indicates terminal width < 80, triggering graceful UI degradation
 
 	options *Options
 }
@@ -131,7 +148,10 @@ func (b *statefulBubble) previousState() {
 	}
 }
 
-func (b *statefulBubble) resize(width, height int) {
+func (b *statefulBubble) resize(width, height int) tea.Cmd {
+	if width == b.width && height == b.height {
+		return nil
+	}
 	x, y := paddingStyle.GetFrameSize()
 	xx, yy := listExtraPaddingStyle.GetFrameSize()
 
@@ -140,6 +160,7 @@ func (b *statefulBubble) resize(width, height int) {
 
 	b.width = styledWidth
 	b.height = styledHeight
+	b.narrow = width < 80
 
 	// Compute image constraints dynamically.
 	imgW, _ := b.getDynamicImageSize()
@@ -148,21 +169,41 @@ func (b *statefulBubble) resize(width, height int) {
 	listWidth := width - xx - b.imageColWidth // Constrain lists so they don't overlap the fixed right pane
 	listHeight := height - yy
 
+	// Apply strict truncation constraints and styles to all list delegates dynamically.
+	updateDelegate := func(l *list.Model, d *list.DefaultDelegate) {
+		// Hide metadata descriptions on small windows to prevent layout claustrophobia
+		d.ShowDescription = !b.narrow
+
+		// Subtract horizontal padding and border space to prevent overflow
+		maxWidth := listWidth - 4
+		d.Styles.NormalTitle = d.Styles.NormalTitle.MaxWidth(maxWidth)
+		d.Styles.SelectedTitle = d.Styles.SelectedTitle.MaxWidth(maxWidth)
+		d.Styles.NormalDesc = d.Styles.NormalDesc.MaxWidth(maxWidth)
+		d.Styles.SelectedDesc = d.Styles.SelectedDesc.MaxWidth(maxWidth)
+		l.SetDelegate(*d)
+	}
+
+	updateDelegate(&b.historyC, &b.historyD)
 	b.historyC.SetSize(listWidth, listHeight)
 	b.historyC.Help.Width = listWidth
 
+	updateDelegate(&b.sourcesC, &b.sourcesD)
 	b.sourcesC.SetSize(listWidth, listHeight)
 	b.sourcesC.Help.Width = listWidth
 
+	updateDelegate(&b.animesC, &b.animesD)
 	b.animesC.SetSize(listWidth, listHeight)
 	b.animesC.Help.Width = listWidth
 
+	updateDelegate(&b.episodesC, &b.episodesD)
 	b.episodesC.SetSize(listWidth, listHeight)
 	b.episodesC.Help.Width = listWidth
 
+	updateDelegate(&b.trackerC, &b.trackerD)
 	b.trackerC.SetSize(listWidth, listHeight)
 	b.trackerC.Help.Width = listWidth
 
+	updateDelegate(&b.postWatchC, &b.postWatchD)
 	b.postWatchC.SetSize(listWidth, listHeight)
 	b.postWatchC.Help.Width = listWidth
 
@@ -172,6 +213,26 @@ func (b *statefulBubble) resize(width, height int) {
 	b.width = styledWidth
 	b.height = styledHeight
 	b.helpC.Width = listWidth
+
+	// Trigger cover art reflow for the currently selected item if it exists.
+	if b.state == animesState {
+		if item := b.animesC.SelectedItem(); item != nil {
+			if a, ok := item.(*listItem).internal.(*source.Anime); ok {
+				return b.fetchCoverArt(a)
+			}
+		}
+	} else if b.state == historyState {
+		if item := b.historyC.SelectedItem(); item != nil {
+			if h, ok := item.(*listItem).internal.(*history.SavedEpisode); ok {
+				// We need a source.Anime for fetchCoverArt. 
+				// The history might not have it immediately, so we just use the selectedAnime if it matches name.
+				if b.selectedAnime != nil && b.selectedAnime.Name == h.AnimeName {
+					return b.fetchCoverArt(b.selectedAnime)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // startLoading enters a concurrent loading state, initializing visual indicators across child components.
@@ -209,6 +270,9 @@ func newBubble(options *Options) *statefulBubble {
 		selectedProviders: make(map[*provider.Provider]struct{}),
 		selectedEpisodes:  make(map[*source.Episode]struct{}),
 		imageMode:         render.DetectProtocol(),
+		httpClient: &http.Client{
+			Timeout: 5 * time.Second,
+		},
 	}
 
 	// Options encapsulates the runtime configuration for the terminal user interface.
@@ -217,25 +281,15 @@ func newBubble(options *Options) *statefulBubble {
 		PinkStyle  bool
 	}
 
-	makeList := func(title string, description bool, options *listOptions) list.Model {
+	makeList := func(title string, description bool, options *listOptions) (list.Model, list.DefaultDelegate) {
 		delegate := list.NewDefaultDelegate()
 		delegate.SetSpacing(viper.GetInt(key.TUIItemSpacing))
 		delegate.ShowDescription = description
 
-		delegate.Styles.SelectedTitle = delegate.Styles.SelectedTitle.
-			Foreground(style.AccentColor).
-			BorderLeftForeground(style.AccentColor).
-			Padding(0, 0, 0, 1)
+		delegate.Styles.SelectedTitle = style.SelectedTitleStyle
+		delegate.Styles.SelectedDesc = style.SelectedDescStyle
 
-		if options != nil && options.PinkStyle {
-			delegate.Styles.SelectedDesc = delegate.Styles.SelectedDesc.
-				Foreground(lipgloss.Color("212")).
-				BorderLeftForeground(lipgloss.Color("212"))
-		} else {
-			delegate.Styles.SelectedDesc = delegate.Styles.SelectedTitle
-		}
-
-		delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(lipgloss.Color("7"))
+		delegate.Styles.NormalTitle = delegate.Styles.NormalTitle.Foreground(style.Text)
 
 		listC := list.New([]list.Item{}, delegate, 0, 0)
 		listC.KeyMap = bubble.keymap.forList()
@@ -253,7 +307,7 @@ func newBubble(options *Options) *statefulBubble {
 		listC.SetShowPagination(false)
 		listC.SetShowStatusBar(false)
 
-		return listC
+		return listC, delegate
 	}
 
 	bubble.helpC = help.New()
@@ -268,21 +322,24 @@ func newBubble(options *Options) *statefulBubble {
 	bubble.inputC.Prompt = viper.GetString(key.TUISearchPromptString)
 	bubble.inputC.ShowSuggestions = true
 
-	bubble.progressC = progress.New(progress.WithDefaultGradient())
+	bubble.progressC = progress.New(
+		progress.WithoutPercentage(),
+		progress.WithGradient(string(style.AccentColor.Dark), string(style.SecondaryColor.Dark)),
+	)
 
 	bubble.idInputC = textinput.New()
 	bubble.idInputC.Placeholder = "Enter Manual ID"
 	bubble.idInputC.CharLimit = 20
 	bubble.idInputC.Prompt = "MAL/Anilist ID: "
 
-	bubble.sourcesC = makeList("Anime Sources", false, &listOptions{
+	bubble.sourcesC, bubble.sourcesD = makeList("Anime Sources", false, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.AccentColor).Padding(0, 1),
 		),
 	})
 	bubble.sourcesC.SetStatusBarItemName("source", "sources")
 
-	bubble.animesC = makeList("Anime Results", true, &listOptions{
+	bubble.animesC, bubble.animesD = makeList("Anime Results", true, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.Lavender).Padding(0, 1),
 		),
@@ -291,7 +348,7 @@ func newBubble(options *Options) *statefulBubble {
 
 	bubble.options = options
 
-	bubble.historyC = makeList("History", true, &listOptions{
+	bubble.historyC, bubble.historyD = makeList("History", true, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.Yellow).Padding(0, 1),
 		),
@@ -299,21 +356,21 @@ func newBubble(options *Options) *statefulBubble {
 	bubble.historyC.SetStatusBarItemName("entry", "entries")
 	bubble.historyC.SetFilteringEnabled(true)
 
-	bubble.episodesC = makeList("Episodes", true, &listOptions{
+	bubble.episodesC, bubble.episodesD = makeList("Episodes", true, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.Peach).Padding(0, 1),
 		),
 	})
 	bubble.episodesC.SetStatusBarItemName("episode", "episodes")
 
-	bubble.trackerC = makeList("Tracker Results", true, &listOptions{
+	bubble.trackerC, bubble.trackerD = makeList("Tracker Results", true, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.Blue).Padding(0, 1),
 		),
 	})
 	bubble.trackerC.SetStatusBarItemName("anime", "animes")
 
-	bubble.postWatchC = makeList("Post-Watch Menu", false, &listOptions{
+	bubble.postWatchC, bubble.postWatchD = makeList("Post-Watch Menu", false, &listOptions{
 		TitleStyle: mo.Some(
 			lipgloss.NewStyle().Foreground(style.Base).Background(style.Mauve).Padding(0, 1),
 		),

@@ -21,6 +21,6 @@ func Run(options *Options) error {
 		bubble.newState(sourcesState)
 	}
 
-	_, err := tea.NewProgram(bubble, tea.WithAltScreen()).Run()
+	_, err := tea.NewProgram(bubble, tea.WithAltScreen(), tea.WithMouseCellMotion()).Run()
 	return err
 }

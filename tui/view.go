@@ -62,22 +62,33 @@ func (b *statefulBubble) viewLoading() string {
 			style.Title("Loading"),
 			"",
 			b.spinnerC.View() + " " + b.progressStatus,
+			b.progressC.View(),
 		},
 	)
 }
 
 func (b *statefulBubble) viewHistory() string {
 	historyView := listExtraPaddingStyle.Render(b.historyC.View())
+
+	// Cognitive Focus Dimming: Reduce background visual noise when searching
+	if b.inputC.Focused() {
+		historyView = style.DimmedStyle.Render(historyView)
+	}
+
 	// Split layout when cover art is available for the current selection.
 	if b.coverArtString != "" {
-		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
+		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Width(b.imageColWidth).Render(b.coverArtString)
 		return lipgloss.JoinHorizontal(lipgloss.Top, historyView, coverView)
 	}
 	return historyView
 }
 
 func (b *statefulBubble) viewSources() string {
-	return listExtraPaddingStyle.Render(b.sourcesC.View())
+	sourcesView := listExtraPaddingStyle.Render(b.sourcesC.View())
+	if b.inputC.Focused() {
+		sourcesView = style.DimmedStyle.Render(sourcesView)
+	}
+	return sourcesView
 }
 
 func (b *statefulBubble) viewSearch() string {
@@ -92,9 +103,14 @@ func (b *statefulBubble) viewSearch() string {
 
 func (b *statefulBubble) viewAnimes() string {
 	animesView := listExtraPaddingStyle.Render(b.animesC.View())
+
+	if b.inputC.Focused() {
+		animesView = style.DimmedStyle.Render(animesView)
+	}
+
 	// Inject the metadata cover side-pane for visual disambiguation.
 	if b.coverArtString != "" {
-		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
+		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Width(b.imageColWidth).Render(b.coverArtString)
 		return lipgloss.JoinHorizontal(lipgloss.Top, animesView, coverView)
 	}
 	return animesView
@@ -102,19 +118,32 @@ func (b *statefulBubble) viewAnimes() string {
 
 func (b *statefulBubble) viewEpisodes() string {
 	episodesView := listExtraPaddingStyle.Render(b.episodesC.View())
+
+	if b.inputC.Focused() {
+		episodesView = style.DimmedStyle.Render(episodesView)
+	}
+
 	if b.coverArtString != "" {
-		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Render(b.coverArtString)
+		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Width(b.imageColWidth).Render(b.coverArtString)
 		return lipgloss.JoinHorizontal(lipgloss.Top, episodesView, coverView)
 	}
 	return episodesView
 }
 
 func (b *statefulBubble) viewTrackerList() string {
-	return listExtraPaddingStyle.Render(b.trackerC.View())
+	trackerView := listExtraPaddingStyle.Render(b.trackerC.View())
+	if b.inputC.Focused() {
+		trackerView = style.DimmedStyle.Render(trackerView)
+	}
+	return trackerView
 }
 
 func (b *statefulBubble) viewPostWatch() string {
-	return listExtraPaddingStyle.Render(b.postWatchC.View())
+	postWatchView := listExtraPaddingStyle.Render(b.postWatchC.View())
+	if b.inputC.Focused() {
+		postWatchView = style.DimmedStyle.Render(postWatchView)
+	}
+	return postWatchView
 }
 
 func (b *statefulBubble) viewRead() string {
@@ -155,6 +184,9 @@ func (b *statefulBubble) viewError() string {
 }
 
 func (b *statefulBubble) renderLines(addHelp bool, lines []string) string {
+	if b.busy && len(lines) > 0 {
+		lines[0] = b.spinnerC.View() + " " + lines[0]
+	}
 	h := len(lines)
 	l := strings.Join(lines, "\n")
 	if addHelp {

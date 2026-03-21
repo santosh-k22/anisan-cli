@@ -30,7 +30,7 @@ func (t *listItem) toggleMark() {
 func (t *listItem) getMark() string {
 	switch t.internal.(type) {
 	case *source.Episode:
-		return lipgloss.NewStyle().Bold(true).Foreground(style.AccentColor).Render(icon.Get(icon.Mark))
+		return style.EpisodeMarkStyle.Render(icon.Get(icon.Mark))
 	case *anilist.Anime, *mal.Anime: // Unified tracker link icon rendering
 		return icon.Get(icon.Link)
 	case *provider.Provider:
@@ -86,7 +86,7 @@ func (t *listItem) Description() (description string) {
 
 		// Status Indicator (e.g., FINISHED, RELEASING)
 		if e.Metadata.Status != "" {
-			var c lipgloss.Color
+			var c lipgloss.TerminalColor
 			if e.Metadata.Status == "RELEASING" {
 				c = style.Green
 			} else {
@@ -130,7 +130,7 @@ func (t *listItem) Description() (description string) {
 
 		// Render media lifecycle status with semantic color coding (Green for Releasing).
 		if e.Status != "" {
-			var c lipgloss.Color
+			var c lipgloss.TerminalColor
 			if e.Status == "RELEASING" {
 				c = style.Green
 			} else {
