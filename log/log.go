@@ -10,12 +10,13 @@ import (
 	"github.com/anisan-cli/anisan/filesystem"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/where"
+	"github.com/charmbracelet/log"
 	"github.com/samber/lo"
-	logrus "github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
 var enabled bool
+var logger *log.Logger
 
 func Setup() error {
 	enabled = viper.GetBool(key.LogsWrite)
@@ -39,91 +40,94 @@ func Setup() error {
 	if err != nil {
 		return fmt.Errorf("open log file: %w", err)
 	}
-	logrus.SetOutput(f)
+
+	logger = log.NewWithOptions(f, log.Options{
+		ReportTimestamp: true,
+	})
 
 	if viper.GetBool(key.LogsJson) {
-		logrus.SetFormatter(&logrus.JSONFormatter{PrettyPrint: true})
+		logger.SetFormatter(log.JSONFormatter)
 	} else {
-		logrus.SetFormatter(&logrus.TextFormatter{})
+		logger.SetFormatter(log.TextFormatter)
 	}
 
 	lvl := viper.GetString(key.LogsLevel)
-	parsed, err := logrus.ParseLevel(lvl)
+	parsed, err := log.ParseLevel(lvl)
 	if err != nil {
-		parsed = logrus.InfoLevel
+		parsed = log.InfoLevel
 	}
-	logrus.SetLevel(parsed)
+	logger.SetLevel(parsed)
 
 	return nil
 }
 
 func Panic(args ...interface{}) {
-	if enabled {
-		logrus.Panic(args...)
+	if enabled && logger != nil {
+		logger.Fatal(fmt.Sprint(args...))
 	}
 }
 func Panicf(format string, args ...interface{}) {
-	if enabled {
-		logrus.Panicf(format, args...)
+	if enabled && logger != nil {
+		logger.Fatalf(format, args...)
 	}
 }
 func Fatal(args ...interface{}) {
-	if enabled {
-		logrus.Fatal(args...)
+	if enabled && logger != nil {
+		logger.Fatal(fmt.Sprint(args...))
 	}
 }
 func Fatalf(format string, args ...interface{}) {
-	if enabled {
-		logrus.Fatalf(format, args...)
+	if enabled && logger != nil {
+		logger.Fatalf(format, args...)
 	}
 }
 func Error(args ...interface{}) {
-	if enabled {
-		logrus.Error(args...)
+	if enabled && logger != nil {
+		logger.Error(fmt.Sprint(args...))
 	}
 }
 func Errorf(format string, args ...interface{}) {
-	if enabled {
-		logrus.Errorf(format, args...)
+	if enabled && logger != nil {
+		logger.Errorf(format, args...)
 	}
 }
 func Warn(args ...interface{}) {
-	if enabled {
-		logrus.Warn(args...)
+	if enabled && logger != nil {
+		logger.Warn(fmt.Sprint(args...))
 	}
 }
 func Warnf(format string, args ...interface{}) {
-	if enabled {
-		logrus.Warnf(format, args...)
+	if enabled && logger != nil {
+		logger.Warnf(format, args...)
 	}
 }
 func Info(args ...interface{}) {
-	if enabled {
-		logrus.Info(args...)
+	if enabled && logger != nil {
+		logger.Info(fmt.Sprint(args...))
 	}
 }
 func Infof(format string, args ...interface{}) {
-	if enabled {
-		logrus.Infof(format, args...)
+	if enabled && logger != nil {
+		logger.Infof(format, args...)
 	}
 }
 func Debug(args ...interface{}) {
-	if enabled {
-		logrus.Debug(args...)
+	if enabled && logger != nil {
+		logger.Debug(fmt.Sprint(args...))
 	}
 }
 func Debugf(format string, args ...interface{}) {
-	if enabled {
-		logrus.Debugf(format, args...)
+	if enabled && logger != nil {
+		logger.Debugf(format, args...)
 	}
 }
 func Trace(args ...interface{}) {
-	if enabled {
-		logrus.Trace(args...)
+	if enabled && logger != nil {
+		logger.Debug(fmt.Sprint(args...))
 	}
 }
 func Tracef(format string, args ...interface{}) {
-	if enabled {
-		logrus.Tracef(format, args...)
+	if enabled && logger != nil {
+		logger.Debugf(format, args...)
 	}
 }

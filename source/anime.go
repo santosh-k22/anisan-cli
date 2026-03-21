@@ -211,8 +211,9 @@ func (a *Anime) copyAnilistMetadata(al *anilist.Anime) {
 
 	// ... (rest of the function)
 
+	// Standardize line-breaks and retain inline markdown/HTML tags for Glamour.
 	summary := strings.ReplaceAll(al.Description, "<br>", "\n")
-	a.Metadata.Summary = htmlTagRegex.ReplaceAllString(summary, "")
+	a.Metadata.Summary = summary
 
 	a.Metadata.Characters = make([]string, len(al.Characters.Nodes))
 	for i, n := range al.Characters.Nodes {

@@ -96,11 +96,19 @@ func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
 	})
 
 	var items []list.Item
+	var suggestions []string
+	seenSuggestions := make(map[string]bool)
+
 	for _, e := range entries {
 		items = append(items, &listItem{
 			internal: e,
 		})
+		if !seenSuggestions[e.AnimeName] {
+			seenSuggestions[e.AnimeName] = true
+			suggestions = append(suggestions, e.AnimeName)
+		}
 	}
+	b.inputC.SetSuggestions(suggestions)
 
 	// Asynchronously hydrate history entries with remote metadata via unified tracker.
 	go func(historyEntries []*history.SavedEpisode) {

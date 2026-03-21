@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/bubbles/progress"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/samber/lo"
@@ -46,6 +47,7 @@ type statefulBubble struct {
 	postWatchC list.Model
 	progressC  progress.Model
 	helpC      help.Model
+	timerC     timer.Model
 	idInputC   textinput.Model // idInputC handles manual overrides for MyAnimeList or AniList IDs
 
 	selectedProviders map[*provider.Provider]struct{}
@@ -70,12 +72,10 @@ type statefulBubble struct {
 	trackerURL            string // Direct URL to the anime record on the tracking service
 	lastError             error
 
-	width, height    int
-	searchSuggestion mo.Option[string]
-
-	coverArtString string            // ANSI-rendered raster data for the currently highlighted item
-	imageMode      render.RenderMode // Evaluated terminal capability for image rendering
-	imageColWidth  int               // Fixed horizontal constraint for the side-pane image container
+	width, height   int
+	coverArtString  string            // ANSI-rendered raster data for the currently highlighted item
+	imageMode       render.RenderMode // Evaluated terminal capability for image rendering
+	imageColWidth   int               // Fixed horizontal constraint for the side-pane image container
 
 	options *Options
 }
@@ -84,6 +84,19 @@ type statefulBubble struct {
 func (b *statefulBubble) raiseError(err error) {
 	b.lastError = err
 	b.newState(errorState)
+}
+
+// showNotification initializes a deterministic timer that will clear the status message after the given duration.
+func (b *statefulBubble) showNotification(msg string, duration time.Duration) tea.Cmd {
+	b.progressStatus = msg
+	b.timerC = timer.NewWithInterval(duration, time.Second)
+	return b.timerC.Init()
+}
+
+// hideNotification instantly clears any active ephemeral notification.
+func (b *statefulBubble) hideNotification() {
+	b.progressStatus = ""
+	b.timerC = timer.Model{} // Reset the timer safely
 }
 
 // setState performs a synchronous transition of both the application workflow and its associated keymap.
@@ -253,6 +266,7 @@ func newBubble(options *Options) *statefulBubble {
 	bubble.inputC.Placeholder = fmt.Sprintf("Search Anime (v%s)", constant.Version)
 	bubble.inputC.CharLimit = 60
 	bubble.inputC.Prompt = viper.GetString(key.TUISearchPromptString)
+	bubble.inputC.ShowSuggestions = true
 
 	bubble.progressC = progress.New(progress.WithDefaultGradient())
 

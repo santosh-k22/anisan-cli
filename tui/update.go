@@ -28,9 +28,10 @@ import (
 	bubblesKey "github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/list"
 	"github.com/charmbracelet/bubbles/textinput"
+	"github.com/charmbracelet/bubbles/timer"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
 	"github.com/samber/lo"
-	"github.com/samber/mo"
 	"github.com/spf13/viper"
 )
 
@@ -59,13 +60,28 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case *anilist.Anime:
 		return b, b.applyManualTrackerUpdate(msg)
 	case error:
+		if msg.Error() == "sync_queued" {
+			return b, b.showNotification("Tracking offline. Queued for background sync.", 3*time.Second)
+		}
 		b.raiseError(msg)
+	case timer.TickMsg:
+		var cmd tea.Cmd
+		b.timerC, cmd = b.timerC.Update(msg)
+		return b, cmd
+	case timer.TimeoutMsg:
+		b.hideNotification()
+		return b, nil
 	case tea.WindowSizeMsg:
 		b.resize(msg.Width, msg.Height)
 	case tea.KeyMsg:
 		switch {
 		case bubblesKey.Matches(msg, b.keymap.forceQuit):
 			return b, tea.Quit
+		case bubblesKey.Matches(msg, b.keymap.showHelp):
+			if b.state != searchState && b.state != manualIDState {
+				b.helpC.ShowAll = !b.helpC.ShowAll
+				return b, nil
+			}
 		}
 
 		if b.busy && b.state != readState && b.state != errorState {
@@ -427,7 +443,7 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if b.historyC.Index() != oldIdx {
 		if b.historyC.SelectedItem() != nil {
 			m, _ := b.historyC.SelectedItem().(*listItem).internal.(*history.SavedEpisode)
-			cmd = tea.Batch(cmd, b.fetchCoverArtFromURL(m.CoverURL))
+			cmd = tea.Batch(cmd, b.fetchCoverArtFromURL(m.CoverURL, ""))
 		}
 	}
 
@@ -546,10 +562,11 @@ func (b *statefulBubble) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			b.newState(loadingState)
 			go query.Remember(b.inputC.Value(), 1)
 			return b, tea.Batch(b.searchAnime(b.inputC.Value()), b.waitForAnimes(), b.spinnerC.Tick)
-		case bubblesKey.Matches(msg, b.keymap.acceptSearchSuggestion) && b.searchSuggestion.IsPresent():
-			b.inputC.SetValue(b.searchSuggestion.MustGet())
-			b.searchSuggestion = mo.None[string]()
-			b.inputC.SetCursor(len(b.inputC.Value()))
+		case bubblesKey.Matches(msg, b.keymap.acceptSearchSuggestion):
+			if s := b.inputC.AvailableSuggestions(); len(s) > 0 {
+				b.inputC.SetValue(s[0])
+				b.inputC.SetCursor(len(b.inputC.Value()))
+			}
 			return b, nil
 		case bubblesKey.Matches(msg, b.keymap.back):
 			b.previousState()
@@ -558,17 +575,6 @@ func (b *statefulBubble) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	b.inputC, cmd = b.inputC.Update(msg)
-
-	if b.inputC.Value() != "" {
-		if suggestion, ok := query.Suggest(b.inputC.Value()).Get(); ok && suggestion != b.inputC.Value() {
-			b.searchSuggestion = mo.Some(suggestion)
-		} else {
-			b.searchSuggestion = mo.None[string]()
-		}
-	} else if b.searchSuggestion.IsPresent() {
-		b.searchSuggestion = mo.None[string]()
-	}
-
 	return b, cmd
 }
 
@@ -1214,38 +1220,49 @@ func (b *statefulBubble) getDynamicImageSize() (int, int) {
 	return targetWidth, targetHeight
 }
 
-func (b *statefulBubble) fetchCoverArtFromURL(url string) tea.Cmd {
+func (b *statefulBubble) fetchCoverArtFromURL(url string, summary string) tea.Cmd {
 	return func() tea.Msg {
-		if url == "" {
-			return coverArtMsg("")
+		var ansii string
+
+		if url != "" {
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+			if err == nil {
+				client := &http.Client{Timeout: 5 * time.Second}
+				resp, err := client.Do(req)
+				if err == nil {
+					defer resp.Body.Close()
+					if resp.StatusCode == http.StatusOK {
+						img, _, err := image.Decode(resp.Body)
+						if err == nil {
+							w, h := b.getDynamicImageSize()
+							ansii = render.RenderCoverArt(img, uint(w), uint(h), b.imageMode)
+						}
+					}
+				}
+			}
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return coverArtMsg("")
+		if summary != "" {
+			w, _ := b.getDynamicImageSize()
+			// Account for imageColWidth constraints and lipgloss paddings structurally
+			r, err := glamour.NewTermRenderer(
+				glamour.WithAutoStyle(),
+				glamour.WithWordWrap(w+2),
+			)
+			if err == nil {
+				if out, err := r.Render(summary); err == nil {
+					if ansii == "" {
+						ansii = out
+					} else {
+						ansii += "\n" + out
+					}
+				}
+			}
 		}
 
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			return coverArtMsg("")
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode != http.StatusOK {
-			return coverArtMsg("")
-		}
-
-		img, _, err := image.Decode(resp.Body)
-		if err != nil {
-			return coverArtMsg("")
-		}
-
-		w, h := b.getDynamicImageSize()
-		ansii := render.RenderCoverArt(img, uint(w), uint(h), b.imageMode)
 		return coverArtMsg(ansii)
 	}
 }
@@ -1263,7 +1280,7 @@ func (b *statefulBubble) fetchCoverArt(anime *source.Anime) tea.Cmd {
 		url = anime.Metadata.Cover.Medium
 	}
 
-	return b.fetchCoverArtFromURL(url)
+	return b.fetchCoverArtFromURL(url, anime.Metadata.Summary)
 }
 
 // resolveMalID guarantees a valid MyAnimeList ID for the AniSkip API,
