@@ -38,10 +38,6 @@ import (
 	"github.com/spf13/viper"
 )
 
-type searchDebounceMsg struct {
-	id    int
-	query string
-}
 
 type playSyncMsg struct {
 	url     string
@@ -101,14 +97,6 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return nil
 		})
-	case searchDebounceMsg:
-		if msg.id == b.lastSearchID && msg.query != "" {
-			go query.Remember(msg.query, 1)
-			b.progressStatus = fmt.Sprintf("Searching for %s...", msg.query)
-			b.newState(loadingState)
-			return b, tea.Batch(b.startLoading(), b.searchAnime(msg.query), b.waitForAnimes(), b.spinnerC.Tick)
-		}
-		return b, nil
 	case *mal.Anime:
 		return b, b.applyManualTrackerUpdate(msg)
 	case *anilist.Anime:
@@ -636,24 +624,16 @@ func (b *statefulBubble) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 			b.newState(sourcesState)
 			return b, b.loadProviders()
 		case bubblesKey.Matches(msg, b.keymap.confirm) && b.inputC.Value() != "":
-			// Instant search override.
-			b.lastSearchID++
+			// Search only fires on Enter.
 			b.progressStatus = fmt.Sprintf("Searching for %s...", b.inputC.Value())
-			b.startLoading()
 			b.newState(loadingState)
 			go query.Remember(b.inputC.Value(), 1)
-			return b, tea.Batch(b.searchAnime(b.inputC.Value()), b.waitForAnimes(), b.spinnerC.Tick)
+			return b, tea.Batch(b.startLoading(), b.searchAnime(b.inputC.Value()), b.waitForAnimes(), b.spinnerC.Tick)
 		case bubblesKey.Matches(msg, b.keymap.acceptSearchSuggestion):
+			// Tab only fills the suggestion into the input — does not trigger a search.
 			if s := b.inputC.AvailableSuggestions(); len(s) > 0 {
 				b.inputC.SetValue(s[0])
 				b.inputC.SetCursor(len(b.inputC.Value()))
-				// Trigger periodic debounce for accepted suggestions too
-				b.lastSearchID++
-				id := b.lastSearchID
-				val := b.inputC.Value()
-				return b, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
-					return searchDebounceMsg{id: id, query: val}
-				})
 			}
 			return b, nil
 		case bubblesKey.Matches(msg, b.keymap.back):
@@ -662,20 +642,7 @@ func (b *statefulBubble) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	oldVal := b.inputC.Value()
 	b.inputC, cmd = b.inputC.Update(msg)
-	newVal := b.inputC.Value()
-
-	if _, ok := msg.(tea.KeyMsg); ok {
-		if newVal != oldVal && newVal != "" {
-			b.lastSearchID++
-			id := b.lastSearchID
-			return b, tea.Batch(cmd, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
-				return searchDebounceMsg{id: id, query: newVal}
-			}))
-		}
-	}
-
 	return b, cmd
 }
 
