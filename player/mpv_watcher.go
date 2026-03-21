@@ -4,15 +4,30 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"sync/atomic"
 	"time"
 
 	"github.com/anisan-cli/anisan/internal/tracker"
 )
 
-// MPVWatcher monitors the MPV player's state via IPC, facilitating real-time status updates and event synchronization.
+// ErrSyncQueued is returned by the tracker when the mutation is deferred to a persistence queue.
+// It is not a failure — the update will be applied asynchronously.
+var ErrSyncQueued = errors.New("sync_queued")
+
+// mpvEvent is the minimal typed structure for MPV IPC events.
+// Using a typed struct avoids per-event heap allocations from map[string]interface{}.
+type mpvEvent struct {
+	Event  string  `json:"event"`
+	Name   string  `json:"name"`
+	Data   float64 `json:"data"`
+	Reason string  `json:"reason"`
+}
+
+// MPVWatcher monitors the MPV player's state via IPC and triggers tracker sync on playback events.
 type MPVWatcher struct {
 	socketPath    string
 	mediaTracker  tracker.MediaTracker
@@ -20,10 +35,11 @@ type MPVWatcher struct {
 	mediaID       int
 	episodeNum    int
 	totalEps      int
+	syncGuard     *atomic.Bool
 }
 
 // NewMPVWatcher initializes a tracker-aware watcher for a specific media entry.
-func NewMPVWatcher(socket string, t tracker.MediaTracker, mediaID, ep, totalEps int) *MPVWatcher {
+func NewMPVWatcher(socket string, t tracker.MediaTracker, mediaID, ep, totalEps int, guard *atomic.Bool) *MPVWatcher {
 	return &MPVWatcher{
 		socketPath:    socket,
 		mediaTracker:  t,
@@ -31,12 +47,10 @@ func NewMPVWatcher(socket string, t tracker.MediaTracker, mediaID, ep, totalEps 
 		mediaID:       mediaID,
 		episodeNum:    ep,
 		totalEps:      totalEps,
+		syncGuard:     guard,
 	}
 }
 
-// Poll establishes the IPC link and initiates the event processing loop.
-// It implements a zero-allocation read cycle directly from the socket to
-// minimize intermediary buffer instantiation.
 func (w *MPVWatcher) Poll(ctx context.Context) error {
 	conn, err := net.DialTimeout("unix", w.socketPath, 2*time.Second)
 	if err != nil {
@@ -44,8 +58,8 @@ func (w *MPVWatcher) Poll(ctx context.Context) error {
 	}
 	defer conn.Close()
 
-	// Register property observation for 'percent-pos'. This enables real-time
-	// state updates via the IPC event stream for asynchronous progress detection.
+	// Register property observation for 'percent-pos'. Standard events like 'end-file'
+	// are delivered automatically to all connected IPC clients without explicit observation.
 	observeCmd := `{"command": ["observe_property", 1, "percent-pos"]}` + "\n"
 	if _, err := conn.Write([]byte(observeCmd)); err != nil {
 		return fmt.Errorf("failed to write observe command: %w", err)
@@ -61,34 +75,48 @@ func (w *MPVWatcher) Poll(ctx context.Context) error {
 		default:
 		}
 
-		// Stencil Struct: Optimized for minimal heap escape during unmarshaling.
-		var event struct {
-			Event string  `json:"event"`
-			Name  string  `json:"name"`
-			Data  float64 `json:"data"`
-		}
-
+		var event mpvEvent
 		if err := decoder.Decode(&event); err != nil {
-			// io.EOF or io.ErrUnexpectedEOF signifies that the remote mpv instance
-			// has terminated the IPC socket. This is handled as a graceful exit.
 			if err == io.EOF || err == io.ErrUnexpectedEOF {
 				return nil
 			}
-			// For any other transient JSON parse error, skip this line and continue.
 			continue
 		}
 
+		// Case 1: Standard property observation for 'percent-pos' (80% threshold).
 		if event.Event == "property-change" && event.Name == "percent-pos" {
 			if !updateFired && event.Data >= w.updateTrigger {
-				if err := w.mediaTracker.UpdateEpisodeProgress(ctx, w.mediaID, w.episodeNum, w.totalEps); err != nil {
-					// "sync_queued" is a non-fatal sentinel indicating that the mutation was
-					// offloaded to the persistence queue; it does not signify a failure of the read loop.
-					if err.Error() != "sync_queued" {
-						return fmt.Errorf("tracker update failed: %w", err)
-					}
+				if err := w.triggerUpdate(ctx); err == nil {
+					updateFired = true
 				}
-				updateFired = true
 			}
 		}
+
+		// Case 2: Native 'end-file' event for deterministic completion (EOF heist).
+		if event.Event == "end-file" {
+			if !updateFired && event.Reason == "eof" {
+				_ = w.triggerUpdate(ctx)
+			}
+			return nil
+		}
 	}
+}
+
+// triggerUpdate executes the tracker synchronization if the sync guard allows.
+func (w *MPVWatcher) triggerUpdate(ctx context.Context) error {
+	if w.syncGuard != nil {
+		if !w.syncGuard.CompareAndSwap(false, true) {
+			return nil
+		}
+	}
+
+	if err := w.mediaTracker.UpdateEpisodeProgress(ctx, w.mediaID, w.episodeNum, w.totalEps); err != nil {
+		if !errors.Is(err, ErrSyncQueued) {
+			if w.syncGuard != nil {
+				w.syncGuard.Store(false)
+			}
+			return err
+		}
+	}
+	return nil
 }

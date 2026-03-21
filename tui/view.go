@@ -70,12 +70,12 @@ func (b *statefulBubble) viewLoading() string {
 func (b *statefulBubble) viewHistory() string {
 	historyView := listExtraPaddingStyle.Render(b.historyC.View())
 
-	// Cognitive Focus Dimming: Reduce background visual noise when searching
+	// Dim background when searching.
 	if b.inputC.Focused() {
 		historyView = style.DimmedStyle.Render(historyView)
 	}
 
-	// Split layout when cover art is available for the current selection.
+	// Split layout if cover art available.
 	if b.coverArtString != "" {
 		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Width(b.imageColWidth).Render(b.coverArtString)
 		return lipgloss.JoinHorizontal(lipgloss.Top, historyView, coverView)
@@ -108,7 +108,7 @@ func (b *statefulBubble) viewAnimes() string {
 		animesView = style.DimmedStyle.Render(animesView)
 	}
 
-	// Inject the metadata cover side-pane for visual disambiguation.
+	// Add cover side-pane.
 	if b.coverArtString != "" {
 		coverView := lipgloss.NewStyle().Padding(1, 2, 0, 2).Width(b.imageColWidth).Render(b.coverArtString)
 		return lipgloss.JoinHorizontal(lipgloss.Top, animesView, coverView)

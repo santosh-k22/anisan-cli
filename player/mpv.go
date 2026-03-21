@@ -1,6 +1,7 @@
 package player
 
 import (
+	"context"
 	"crypto/rand"
 	"fmt"
 	"net"
@@ -10,8 +11,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/anisan-cli/anisan/internal/tracker"
 	"github.com/anisan-cli/anisan/log"
 )
 
@@ -27,17 +30,31 @@ type MPV struct {
 	exited     chan struct{} // closed when mpv process exits
 	tickerStop chan struct{} // signals ticker to stop
 	mu         sync.Mutex    // Protects socket writes
+
+	// Tracker context for background synchronization
+	tracker    tracker.MediaTracker
+	mediaID    int
+	episodeNum int
+	totalEps   int
+	syncGuard  *atomic.Bool
 }
 
-// NewMPV creates a new MPV player instance (does not start playback).
+// NewMPV creates a new MPV player instance.
 func NewMPV() *MPV {
 	return &MPV{
 		exited: make(chan struct{}),
 	}
 }
 
-// Play starts playback of the given URL. If mpv is already running,
-// it loads the new file into the existing instance via IPC.
+// SetTrackerContext binds tracking metadata and an optional sync guard to the player session.
+func (m *MPV) SetTrackerContext(t tracker.MediaTracker, id, ep, total int, guard *atomic.Bool) {
+	m.tracker = t
+	m.mediaID = id
+	m.episodeNum = ep
+	m.totalEps = total
+	m.syncGuard = guard
+}
+
 // Play starts playback of the given URL. If mpv is already running,
 // it loads the new file into the existing instance via IPC.
 func (m *MPV) Play(rawURL string, title string, headers map[string]string) error {
@@ -90,6 +107,16 @@ func (m *MPV) Play(rawURL string, title string, headers map[string]string) error
 			}
 		}
 		return fmt.Errorf("mpv socket not ready: %w", err)
+	}
+
+	// Initialize background sync watcher if tracker context is provided.
+	if m.tracker != nil {
+		watcher := NewMPVWatcher(m.socketPath, m.tracker, m.mediaID, m.episodeNum, m.totalEps, m.syncGuard)
+		go func() {
+			if err := watcher.Poll(context.Background()); err != nil {
+				log.Warnf("mpv watcher exited with error: %v", err)
+			}
+		}()
 	}
 
 	return nil

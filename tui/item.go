@@ -31,7 +31,7 @@ func (t *listItem) getMark() string {
 	switch t.internal.(type) {
 	case *source.Episode:
 		return style.EpisodeMarkStyle.Render(icon.Get(icon.Mark))
-	case *anilist.Anime, *mal.Anime: // Unified tracker link icon rendering
+	case *anilist.Anime, *mal.Anime:
 		return icon.Get(icon.Link)
 	case *provider.Provider:
 		return icon.Get(icon.Search)
@@ -100,8 +100,7 @@ func (t *listItem) Description() (description string) {
 			parts = append(parts, lipgloss.NewStyle().Foreground(c).Render(statusStr))
 		}
 
-		// Dynamic Rating: Render the media score according to the active backend's numeric scale.
-		// MyAnimeList utilizes a 1.0-10.0 decimal scale, whereas AniList employs a 0-100 percentage range.
+		// Score coloring based on backend.
 		if e.Metadata.Score > 0 {
 			if viper.GetString(key.TrackerBackend) == "mal" {
 				parts = append(parts, lipgloss.NewStyle().Foreground(style.AccentColor).Render(fmt.Sprintf("★ %.1f", float64(e.Metadata.Score)/10.0)))
@@ -128,7 +127,7 @@ func (t *listItem) Description() (description string) {
 		// Display the specific episode index for historical reference.
 		parts = append(parts, fmt.Sprintf("Ep: %d", e.Index))
 
-		// Render media lifecycle status with semantic color coding (Green for Releasing).
+		// Status indicator.
 		if e.Status != "" {
 			var c lipgloss.TerminalColor
 			if e.Status == "RELEASING" {
@@ -143,7 +142,7 @@ func (t *listItem) Description() (description string) {
 			parts = append(parts, lipgloss.NewStyle().Foreground(c).Render(statusStr))
 		}
 
-		// Normalize and display scores based on the active tracking backend's specific scale.
+		// Score coloring.
 		if e.Score > 0 {
 			if viper.GetString(key.TrackerBackend) == "mal" {
 				parts = append(parts, lipgloss.NewStyle().Foreground(style.AccentColor).Render(fmt.Sprintf("★ %.1f", float64(e.Score)/10.0)))

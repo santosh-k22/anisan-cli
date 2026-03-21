@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anisan-cli/anisan/constant"
@@ -30,7 +31,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-// statefulBubble represents the main TUI model, coordinating components and state transitions.
+// statefulBubble coordinates components and state transitions.
 type statefulBubble struct {
 	state         state
 	statesHistory util.Stack[state]
@@ -84,6 +85,7 @@ type statefulBubble struct {
 	currentPlayingEpisode *source.Episode
 	nextEpisodeToPlay     *source.Episode // Queued episode for seamless transitions
 	mpvPlayer             player.Player
+	syncGuard             *atomic.Bool
 	trackerName           string // Canonical title on the tracking service (AniList/MAL)
 	trackerURL            string // Direct URL to the anime record on the tracking service
 	lastError             error
@@ -103,7 +105,7 @@ func (b *statefulBubble) raiseError(err error) {
 	b.newState(errorState)
 }
 
-// showNotification initializes a deterministic timer that will clear the status message after the given duration.
+// showNotification shows an ephemeral status message.
 func (b *statefulBubble) showNotification(msg string, duration time.Duration) tea.Cmd {
 	b.progressStatus = msg
 	b.timerC = timer.NewWithInterval(duration, time.Second)
@@ -116,13 +118,13 @@ func (b *statefulBubble) hideNotification() {
 	b.timerC = timer.Model{} // Reset the timer safely
 }
 
-// setState performs a synchronous transition of both the application workflow and its associated keymap.
+// setState performs a state transition.
 func (b *statefulBubble) setState(s state) {
 	b.state = s
 	b.keymap.setState(s)
 }
 
-// newState facilitates an idempotent transition to a target state, recording the previous state in the navigation history when appropriate.
+// newState transitions to a state and records history.
 func (b *statefulBubble) newState(s state) {
 	if b.state == s {
 		return
@@ -235,17 +237,18 @@ func (b *statefulBubble) resize(width, height int) tea.Cmd {
 	return nil
 }
 
-// startLoading enters a concurrent loading state, initializing visual indicators across child components.
+// startLoading enters loading state.
 func (b *statefulBubble) startLoading() tea.Cmd {
 	b.loading = true
 	b.busy = true
 	return tea.Batch(b.animesC.StartSpinner(), b.episodesC.StartSpinner(), b.trackerC.StartSpinner())
 }
 
-// stopLoading exits the loading state and synchronizes child component visual indicators.
+// stopLoading exits loading state.
 func (b *statefulBubble) stopLoading() tea.Cmd {
 	b.loading = false
 	b.busy = false
+	b.progressStatus = "" // Clear stale status messages
 	b.animesC.StopSpinner()
 	b.episodesC.StopSpinner()
 	b.trackerC.StopSpinner()

@@ -28,13 +28,13 @@ AniSan is a modular, performant CLI for **browsing, streaming, and tracking anim
 |---|---|
 | 🔌 **Lua-Powered Scrapers** | Easily extensible sources (AllAnime ships by default). |
 | 🖼️ **Terminal Img Renderer**| High-fidelity Anime Cover Art rendered dynamically during TUI search/history via TrueColor ANSI blocking. |
-| 🎬 **MPV Integration** | Background IPC control, auto-resume, visual chapter markers, and HTTP header support. |
-| 📡 **Tracking Sync** | Two-way sync with **Anilist** and **MyAnimeList** featuring an internal offline persistence queue for both backends. |
+| 🎬 **MPV Integration** | Background IPC control, auto-resume, visual chapter markers, and performance-optimized event polling. |
+| 📡 **Deterministic Sync**| Forensic synchronization via native event triggers (EOF heist), ensuring reliable tracker updates even on instant player exits. |
 | 📊 **Rich History Model** | Visually tracks watch progress, statuses, aggregated scores, and associated genres locally. |
 | ⚡ **7-Day Caching** | Instantaneous TUI loading powered by a native Go metadata cache. |
 | ⏩ **Auto-Skip Intro** | Integration with [AniSkip](https://api.aniskip.com) to skip OP/ED. |
-| 🛡️ **Bypass** | HTTP/2 + uTLS fingerprinting to bypass Cloudflare. |
-| 🎨 **TUI** | Beautiful "Catppuccin" themed UI with fluid wrap-around navigation. |
+| 🛡️ **Atomic Guarding** | Shared `sync/atomic` guards prevent double-synchronization or race conditions between background watchers and TUI handlers. |
+| 🎨 **TUI** | Beautiful "Catppuccin" themed UI with fluid wrap-around navigation and native autocomplete. |
 | 🍏 **IINA Support** | Native macOS player integration with full feature parity. |
 
 ## 📦 Installation
@@ -119,7 +119,7 @@ anisan anilist auth
 # Authorize MyAnimeList
 anisan mal auth
 ```
-*Note: The interactive TUI will proactively check your authentication status before playback, preventing any silent sync failures in the background.*
+*Note: The interactive TUI will proactively check your authentication status before playback. It utilizes a shared atomic synchronization guard to ensure that your progress is updated exactly once, either by the background IPC watcher or the exit handler, preventing redundant tracker requests.*
 
 ### Key Configuration Options
 
@@ -188,7 +188,7 @@ Authenticate to sync your watch progress automatically.
 
 2. **Usage**:
    - In the episode list, press `t` to search and link the anime entry dynamically based on your active `tracker.backend` configuration.
-   - Once linked, progress will sync automatically when you reach ~80% of an episode.
+   - Once linked, progress will sync automatically when you reach ~80% of an episode, or instantly upon reaching the end (EOF) via native IPC events.
 
 ### Anilist
 1. **Authenticate**:
@@ -200,7 +200,7 @@ Authenticate to sync your watch progress automatically.
    - In the episode list, press `t` to search and link the anime to an Anilist entry manually (if `anilist` is set as the active backend).
 
 ### Progress Syncing & Manual Overrides
-AniSan syncs your watch history directly to MyAnimeList (MAL) or Anilist automatically once you surpass the `completion_percentage` (default 80%).
+AniSan syncs your watch history directly to MyAnimeList (MAL) or Anilist automatically once you surpass the `completion_percentage` (default 80%) or when the video completes (EOF).
 
 Sometimes, a scraped Anime title doesn't perfectly match the MAL/Anilist database (e.g., alternate English names). If auto-sync fails to recognize the show:
 1. Open the Anime's **Episodes Menu**.

@@ -42,6 +42,7 @@ func (c *Client) UpdateEpisodeProgress(ctx context.Context, id int, episode int,
 	formData.Set("num_watched_episodes", strconv.Itoa(episode))
 
 	// Dynamically handle completion state if metadata provides a total episode count.
+	// As per forensic audit: explicitly transition to 'completed' when current episode matches total.
 	if totalEpisodes > 0 && episode >= totalEpisodes {
 		formData.Set("status", "completed")
 	} else {

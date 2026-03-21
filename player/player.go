@@ -1,14 +1,21 @@
 package player
 
+import (
+	"sync/atomic"
+
+	"github.com/anisan-cli/anisan/internal/tracker"
+)
+
 // Player encapsulates the required capabilities for a media playback backend.
 type Player interface {
-	// Play starts playback of the given URL with the specified title.
-	// If a player instance is already running, it loads the new file into it.
+	// Play starts playback in background mode.
 	Play(url string, title string, headers map[string]string) error
 
-	// PlaySync starts playback synchronously and blocks until the player process exits.
-	// This yields the TTY to the subprocess (essential for tea.Suspend handoffs).
+	// PlaySync starts playback synchronously (TTY handoff).
 	PlaySync(url string, title string, headers map[string]string) error
+
+	// SetTrackerContext binds tracking metadata and an optional sync guard to the player session.
+	SetTrackerContext(t tracker.MediaTracker, mediaID, ep, totalEps int, syncGuard *atomic.Bool)
 
 	// TogglePause inverts the current playback suspension state.
 	TogglePause() error

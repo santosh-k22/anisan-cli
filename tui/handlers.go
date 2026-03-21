@@ -6,11 +6,11 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"runtime"
 
 	"github.com/anisan-cli/anisan/anilist"
-	"github.com/anisan-cli/anisan/color"
 	"github.com/anisan-cli/anisan/history"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/anisan-cli/anisan/log"
@@ -18,7 +18,6 @@ import (
 	"github.com/anisan-cli/anisan/player"
 	"github.com/anisan-cli/anisan/provider"
 	"github.com/anisan-cli/anisan/source"
-	"github.com/anisan-cli/anisan/style"
 	"github.com/anisan-cli/anisan/util"
 	"github.com/charmbracelet/bubbles/list"
 	tea "github.com/charmbracelet/bubbletea"
@@ -107,7 +106,7 @@ func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
 	}
 	b.inputC.SetSuggestions(suggestions)
 
-	// Asynchronously hydrate history entries with remote metadata via unified tracker.
+	// Populate history entries with remote metadata.
 	go func(historyEntries []*history.SavedEpisode) {
 		// Group by name to avoid duplicate fetches
 		nameMap := make(map[string][]*history.SavedEpisode)
@@ -162,7 +161,7 @@ func (b *statefulBubble) loadHistory() (tea.Cmd, error) {
 }
 
 func (b *statefulBubble) loadSources(ps []*provider.Provider) tea.Cmd {
-	// Initialize scraper backends concurrently using a WaitGroup to minimize interface blocking.
+	// Initialize scraper backends concurrently.
 	return func() tea.Msg {
 		var (
 			sources = make([]source.Source, len(ps))
@@ -181,7 +180,6 @@ func (b *statefulBubble) loadSources(ps []*provider.Provider) tea.Cmd {
 				}
 
 				log.Info("loading source " + p.ID)
-				b.progressStatus = "Initializing source"
 				var s source.Source
 				s, err = p.CreateSource()
 
@@ -236,10 +234,9 @@ func (b *statefulBubble) waitForSourcesLoaded() tea.Cmd {
 }
 
 func (b *statefulBubble) searchAnime(query string) tea.Cmd {
-	// Execute a fan-out search across all active providers and aggregate results into a unified set.
+	// Search across all active providers.
 	return func() tea.Msg {
 		log.Info("searching for " + query)
-		b.progressStatus = fmt.Sprintf("Searching among %s", util.Quantify(len(b.selectedSources), "source", "sources"))
 
 		var animes = make([]*source.Anime, 0)
 		var mutex sync.Mutex
@@ -285,7 +282,7 @@ func (b *statefulBubble) waitForAnimes() tea.Cmd {
 }
 
 func (b *statefulBubble) getEpisodes(anime *source.Anime) tea.Cmd {
-	// Fetch the canonical episode list from the anime's origin source.
+	// Get episodes from source.
 	return func() tea.Msg {
 		log.Info("getting episodes of " + anime.Name)
 		episodes, err := anime.Source.EpisodesOf(anime)
@@ -317,13 +314,11 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 	return func() tea.Msg {
 		b.currentPlayingEpisode = episode
 
-		// Persist playback initiation to the user's history record.
+		// Save to history.
 		_ = history.Save(episode, 0.0)
 
 		title := fmt.Sprintf("%s - %s", episode.Anime.Name, episode.Name)
-
 		log.Infof("Playing %s via mpv IPC", title)
-		b.progressStatus = fmt.Sprintf("Launching %s", style.Fg(color.Purple)(title))
 
 		if b.mpvPlayer == nil {
 			if viper.GetString(key.Player) == "iina" && runtime.GOOS == "darwin" {
@@ -354,7 +349,12 @@ func (b *statefulBubble) readEpisode(episode *source.Episode) tea.Cmd {
 			}
 		}
 
-		b.stopLoading()
+		b.syncGuard = &atomic.Bool{}
+		if activeTracker, err := b.getActiveTracker(); err == nil && activeTracker != nil {
+			trackerID, totalEpisodes := b.getTrackerMetadata(episode.Anime)
+			b.mpvPlayer.SetTrackerContext(activeTracker, trackerID, int(episode.Index), totalEpisodes, b.syncGuard)
+		}
+
 		return playSyncMsg{
 			url:     videoURL,
 			title:   title,
@@ -467,7 +467,6 @@ func (b *statefulBubble) fetchAnilist(anime *source.Anime) tea.Cmd {
 		}
 
 		log.Info("fetching anilist for " + cleanName)
-		b.progressStatus = fmt.Sprintf("Fetching anilist for %s", style.Fg(color.Purple)(cleanName))
 		animes, err := anilist.SearchByName(cleanName)
 		if err != nil {
 			log.Error(err)
@@ -514,7 +513,6 @@ func (b *statefulBubble) fetchMALAnime(query string) tea.Cmd {
 		}
 
 		log.Info("searching MAL for " + cleanName)
-		b.progressStatus = fmt.Sprintf("Searching MAL for %s", style.Fg(color.Purple)(cleanName))
 		animes, err := mal.SearchAnime(cleanName)
 		if err != nil {
 			log.Error(err)

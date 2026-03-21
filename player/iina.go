@@ -6,14 +6,14 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync/atomic"
 
+	"github.com/anisan-cli/anisan/internal/tracker"
 	"github.com/anisan-cli/anisan/key"
 	"github.com/spf13/viper"
 )
 
 // IINA implements the Player interface for macOS native IINA playback.
-// It acts as a stub for IPC functionality since IINA does not expose
-// the same IPC socket interface as mpv.
 type IINA struct {
 	cmd    *exec.Cmd
 	exited chan struct{}
@@ -23,6 +23,11 @@ func NewIINA() *IINA {
 	return &IINA{
 		exited: make(chan struct{}),
 	}
+}
+
+// SetTrackerContext implements the Player interface for tracking metadata.
+func (m *IINA) SetTrackerContext(t tracker.MediaTracker, id, ep, total int, guard *atomic.Bool) {
+	// IINA native playback via 'open' does not support background IPC synchronization.
 }
 
 func (m *IINA) Play(rawURL string, title string, headers map[string]string) error {
