@@ -105,6 +105,7 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id == b.lastSearchID && msg.query != "" {
 			go query.Remember(msg.query, 1)
 			b.progressStatus = fmt.Sprintf("Searching for %s...", msg.query)
+			b.newState(loadingState)
 			return b, tea.Batch(b.startLoading(), b.searchAnime(msg.query), b.waitForAnimes(), b.spinnerC.Tick)
 		}
 		return b, nil
@@ -665,12 +666,14 @@ func (b *statefulBubble) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
 	b.inputC, cmd = b.inputC.Update(msg)
 	newVal := b.inputC.Value()
 
-	if newVal != oldVal && newVal != "" {
-		b.lastSearchID++
-		id := b.lastSearchID
-		return b, tea.Batch(cmd, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
-			return searchDebounceMsg{id: id, query: newVal}
-		}))
+	if _, ok := msg.(tea.KeyMsg); ok {
+		if newVal != oldVal && newVal != "" {
+			b.lastSearchID++
+			id := b.lastSearchID
+			return b, tea.Batch(cmd, tea.Tick(300*time.Millisecond, func(t time.Time) tea.Msg {
+				return searchDebounceMsg{id: id, query: newVal}
+			}))
+		}
 	}
 
 	return b, cmd
