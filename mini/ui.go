@@ -1,4 +1,3 @@
-// Package mini implements a lightweight, minimalist interface for anime search and playback.
 package mini
 
 import (
@@ -9,7 +8,6 @@ import (
 
 	"github.com/anisan-cli/anisan/color"
 	"github.com/anisan-cli/anisan/style"
-	"github.com/samber/lo"
 )
 
 func progress(msg string) (eraser func()) {
@@ -54,9 +52,12 @@ func menu[T fmt.Stringer](items []T, options ...*bind) (*bind, T, error) {
 	}
 
 	isValidOption := func(s string) bool {
-		return lo.Contains(lo.Map(options, func(o *bind, _ int) string {
-			return o.A
-		}), s)
+		for _, o := range options {
+			if o.A == s {
+				return true
+			}
+		}
+		return false
 	}
 
 	in, err := getInput(func(s string) bool {

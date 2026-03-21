@@ -1,5 +1,3 @@
-// Package player defines a unified abstraction layer for media playback engines.
-// The architecture supports multiple backends, with the primary implementation targeting 'mpv' via its JSON-IPC interface.
 package player
 
 // Player encapsulates the required capabilities for a media playback backend.

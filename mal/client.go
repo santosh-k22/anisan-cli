@@ -16,8 +16,8 @@ const (
 	apiEndpoint = "https://api.myanimelist.net/v2"
 )
 
-// authenticatedRequest executes an HTTP request using an OAuth2 Bearer token, automatically refreshing the token on 401 Unauthorized responses.
-func authenticatedRequest(method, urlStr string, body string) (*http.Response, error) {
+// AuthenticatedRequest executes an HTTP request using an OAuth2 Bearer token, automatically refreshing the token on 401 Unauthorized responses.
+func AuthenticatedRequest(method, urlStr string, body string) (*http.Response, error) {
 	token, err := LoadToken()
 	if err != nil {
 		return nil, fmt.Errorf("mal auth required: %w", err)

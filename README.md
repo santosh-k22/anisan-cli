@@ -58,7 +58,7 @@ go install .
 ### Using IINA (macOS only)
 To use IINA instead of MPV on macOS, update your configuration:
 ```bash
-anisan config set -k player -v iina
+anisan config set player.default iina
 ```
 
 ## ⚡ Usage
@@ -97,13 +97,13 @@ You can read or overwrite ANY built-in config directly from your shell by passin
 anisan config get player.aniskip
 
 # Set a value
-anisan config set -k player.aniskip -v false
+anisan config set player.aniskip false
 
 # Change Tracker Backend (anilist or mal)
-anisan config set -k tracker.backend -v mal
+anisan config set tracker.backend mal
 
 # Reset a value to default
-anisan config reset -k player.aniskip
+anisan config reset --key player.aniskip
 ```
 *Tip: Run `anisan config get` without any keys to view your entire active configuration tree.*
 
@@ -125,12 +125,14 @@ anisan mal auth
 
 | Key | Default | Description |
 |---|---|---|
+| `tracker.backend` | `anilist` | Active media synchronization backend (`anilist` or `mal`). |
+| `tracker.enable` | `false` | Enable remote media tracker integration. |
+| `tracker.auto_link` | `true` | Prompt to safely auto-link to Tracker when selecting an anime. |
+| `player.default` | `mpv` | Media player to use (e.g., `mpv`, `iina`). |
 | `player.aniskip` | `true` | Enable/Disable auto-skipping intros via AniSkip. |
-| `anilist.enable` | `false` | Enable Anilist integration. |
-| `anilist.link_on_anime_select` | `true` | Prompt to link to Anilist when selecting an anime. |
-| `tui.show_urls` | `true` | Show URLs in the list view. |
-| `logs.level` | `info` | Log level (panic, fatal, error, warn, info, debug, trace). |
-| `icons.variant` | `plain` | Icon set (emoji, nerd, plain, kaomoji). |
+| `player.completion_percentage` | `80` | Percentage required to automatically mark an episode as watched (1-100). |
+| `tui.show_urls` | `true` | Show URLs in the interactive list view. |
+| `icons.variant` | `plain` | Icon set (`emoji`, `nerd`, `plain`, `kaomoji`). |
 
 *(See `anisan config info` for a full list of options)*
 
@@ -173,13 +175,19 @@ anisan config set player.aniskip false
 Authenticate to sync your watch progress automatically.
 
 1. **Authenticate**:
+   First, register an API application on your [MyAnimeList API Panel](https://myanimelist.net/apiconfig).
+   Copy the generated Client ID and set it as an AniSan config:
+   ```bash
+   anisan config set tracker.mal.client_id "YOUR_MAL_CLIENT_ID"
+   ```
+   Then trigger the OAuth2 flow:
    ```bash
    anisan mal auth
    ```
    This will open your browser. Login and approve the app.
 
 2. **Usage**:
-   - In the episode list, press `m` to search and link the anime to a MAL entry.
+   - In the episode list, press `t` to search and link the anime entry dynamically based on your active `tracker.backend` configuration.
    - Once linked, progress will sync automatically when you reach ~80% of an episode.
 
 ### Anilist
@@ -189,7 +197,7 @@ Authenticate to sync your watch progress automatically.
    ```
    This will open your browser, request access for AniSan, and safely store the token.
 2. **Usage**:
-   - In the episode list, press `a` to search and link the anime to an Anilist entry manually.
+   - In the episode list, press `t` to search and link the anime to an Anilist entry manually (if `anilist` is set as the active backend).
 
 ### Progress Syncing & Manual Overrides
 AniSan syncs your watch history directly to MyAnimeList (MAL) or Anilist automatically once you surpass the `completion_percentage` (default 80%).
@@ -209,27 +217,49 @@ AniSan's TUI is designed for speed. **Wrap-Around Scrolling** is enabled globall
 - `↓` / `j`: Down (Wraps around)
 - `←` / `h`: Previous page
 - `→` / `l`: Next page
-- `/` : Activate fuzzy filtering (filters titles, genres, and media statuses)
+- `/` : Activate fuzzy filtering
+- `tab` : Accept active search suggestion
 - `g`: Jump to Top
 - `G`: Jump to Bottom
-- `q`: Quit
+- `q` / `ctrl+c`: Quit
 - `esc`: Back / Cancel
 - `?`: Toggle help menu
 
+**Interactive Overrides & States**
+- `S`: Change source / Save as Default (in Source Selection)
+- `d`: Delete entry (in History State)
+
 **Episode List Actions**
 - `enter`: Play selected episode
-- `m`: Search/Link MyAnimeList dynamically
-- `a`: Search/Link Anilist dynamically
+- `space` : Select a single episode (useful for batching)
+- `tab` / `ctrl+a` / `*` : Select all episodes in list
+- `backspace` : Clear all active selections
+- `t`: Search/Link to your currently configured active Tracker dynamically
 - `I`: **Manual ID Override** (Input MAL/Anilist ID directly)
 - `v`: Select all episodes strictly by Volume
 - `o`: Open episode source URL in browser
 
-**Post-Watch Menu**
-*(Appears automatically when an episode finishes or the player is closed)*
-- **Next**: Instantly play the next chronological episode
-- **Replay**: Restart the current episode
-- **Previous**: Play the prior chronological episode
-- **Quit**: Return to the main menu
+**Post-Watch Menu & Player Binds**
+*(Player keybindings available natively inside the CLI when MPV is hosted)*
+- `space`: Pause/Resume active playback
+- `n`: Skip to Next chronological episode
+- `p`: Revert to Previous chronological episode
+- `r`: Replay the current episode
+- **Menu Options** *(Appears when episode finishes or player is closed)*: Next, Replay, Previous, Back to Episodes
+## 🛠️ Utility Commands
+
+Beyond traditional TUI interaction, AniSan ships with an array of built-in CLI-native utility tools for power-users, developers, and advanced scripters.
+
+| Command | Action |
+|---|---|
+| `anisan sources list` | List all discovered built-in and user-installed Lua providers |
+| `anisan sources gen` | Scaffolds a complete Lua template to develop a custom provider |
+| `anisan where` | Print localized filesystem locations (`config`, `cache`, `sources`, etc) |
+| `anisan env` | List all available framework environment variables |
+| `anisan clear` | System utility to wipe tracking caches, queries, or corrupt histories |
+| `anisan mini` | Launch an experimental, ultra-lightweight minimalist search CLI |
+| `anisan run` | Execute and debug a local Lua scraper file headless via Go-Lua |
+| `anisan version` | Output exhaustive build metrics and metadata |
 
 ## 🤝 Acknowledgments & Inspiration
 

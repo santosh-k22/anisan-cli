@@ -1,11 +1,8 @@
-// Package aniskip provides a client for the AniSkip API, enabling automated retrieval of opening and ending skip timestamps.
-
 package aniskip
 
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 
 	"github.com/anisan-cli/anisan/log"
@@ -42,7 +39,6 @@ type apiResponse struct {
 // GetSkipTimes retrieves the skip intervals for a specific media entry and episode number from the AniSkip service.
 // Returns nil (not an error) if no skip times are available.
 func GetSkipTimes(malID int, episode int) (*SkipTimes, error) {
-	// Short-circuit network requests if the media ID cannot be resolved.
 	if malID == 0 {
 		log.Warnf("aniskip bypassed: invalid or unresolved MAL ID (0)")
 		return nil, nil
@@ -53,23 +49,17 @@ func GetSkipTimes(malID int, episode int) (*SkipTimes, error) {
 	resp, err := http.Get(url)
 	if err != nil {
 		log.Warnf("aniskip API request failed: %v", err)
-		return nil, nil // Graceful degradation
+		return nil, nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Warnf("aniskip API returned status %d", resp.StatusCode)
-		// Recover gracefully: Maintain operation without skip interval data.
 		return nil, nil
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read aniskip response: %w", err)
-	}
-
 	var data apiResponse
-	if err := json.Unmarshal(body, &data); err != nil {
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return nil, fmt.Errorf("parse aniskip response: %w", err)
 	}
 

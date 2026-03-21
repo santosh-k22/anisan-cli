@@ -1,4 +1,3 @@
-// Package custom provides a bridge between the Go core and Lua-based scraper scripts.
 package custom
 
 import (
@@ -14,12 +13,10 @@ type luaSource struct {
 	mu    sync.Mutex // Protects the non-thread-safe Lua stack from concurrent access
 }
 
-// Name returns the provider name.
 func (s *luaSource) Name() string {
 	return s.name
 }
 
-// ID returns the provider ID.
 func (s *luaSource) ID() string {
 	return IDfromName(s.name) // Defined in loader.go
 }
@@ -33,7 +30,6 @@ func newLuaSource(name string, state *lua.LState) (*luaSource, error) {
 	return s, nil
 }
 
-// call executes a global Lua function safely.
 func (s *luaSource) call(fn string, retType lua.LValueType, args ...lua.LValue) (lua.LValue, error) {
 	// Acquire lock to prevent stack corruption from concurrent TUI background updates.
 	s.mu.Lock()

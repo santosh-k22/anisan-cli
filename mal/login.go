@@ -2,6 +2,8 @@ package mal
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 
@@ -22,14 +24,23 @@ func Login() error {
 		return err
 	}
 
-	authURL := fmt.Sprintf("https://myanimelist.net/v1/oauth2/authorize?response_type=code&client_id=%s&code_challenge=%s", clientID, pkce)
+	stateBytes := make([]byte, 16)
+	if _, err := rand.Read(stateBytes); err != nil {
+		return err
+	}
+	state := hex.EncodeToString(stateBytes)
+
+	authURL := fmt.Sprintf(
+		"https://myanimelist.net/v1/oauth2/authorize?response_type=code&client_id=%s&code_challenge=%s&code_challenge_method=plain&state=%s&redirect_uri=http://localhost:8080/callback",
+		clientID, pkce, state,
+	)
 
 	log.Info("Opening browser for MyAnimeList authentication...")
 	if err := open.Start(authURL); err != nil {
 		log.Warnf("Could not open browser. Please navigate manually: %s", authURL)
 	}
 
-	srv := &http.Server{Addr: "127.0.0.1:8080"}
+	srv := &http.Server{Addr: "localhost:8080"}
 	var authErr error
 
 	http.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
@@ -46,7 +57,7 @@ func Login() error {
 		go srv.Shutdown(context.Background())
 	})
 
-	log.Info("Waiting for authorization callback on http://127.0.0.1:8080/callback...")
+	log.Info("Waiting for authorization callback on http://localhost:8080/callback...")
 	if err := srv.ListenAndServe(); err != http.ErrServerClosed {
 		return fmt.Errorf("local server failed: %w", err)
 	}

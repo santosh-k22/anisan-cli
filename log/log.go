@@ -1,4 +1,3 @@
-// Package log provides a thread-safe, structured logging infrastructure with filesystem-based persistence.
 package log
 
 import (
@@ -16,11 +15,8 @@ import (
 	"github.com/spf13/viper"
 )
 
-// enabled indicates the persistent logging state for the active application instance.
 var enabled bool
 
-// Setup initializes the logging subsystem, including file handles, formatting, and severity levels based on global configuration.
-// Inoperative state: If logging is disabled, all subsequent log emissions are silently discarded.
 func Setup() error {
 	enabled = viper.GetBool(key.LogsWrite)
 	if !enabled {
@@ -60,8 +56,6 @@ func Setup() error {
 
 	return nil
 }
-
-// Severity-Specific Log Emissions - these functions proxy messages to the configured backend when logging is enabled.
 
 func Panic(args ...interface{}) {
 	if enabled {

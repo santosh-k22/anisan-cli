@@ -1,4 +1,3 @@
-// Package source defines the domain models and interfaces for media discovery and retrieval.
 package source
 
 // Episode represents a discrete media segment within an anime series.

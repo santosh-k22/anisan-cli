@@ -16,7 +16,7 @@ func SearchAnime(query string) ([]Anime, error) {
 	q.Set("fields", "status,num_episodes,mean")
 	u.RawQuery = q.Encode()
 
-	resp, err := authenticatedRequest("GET", u.String(), "")
+	resp, err := AuthenticatedRequest("GET", u.String(), "")
 	if err != nil {
 		return nil, fmt.Errorf("mal search: %w", err)
 	}

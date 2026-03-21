@@ -3,6 +3,7 @@ package anilist
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -36,7 +37,7 @@ const (
 )
 
 // UpdateMediaListEntry updates the progress and status of an anime in the user's list.
-func UpdateMediaListEntry(mediaId int, progress int, status MediaListStatus) error {
+func UpdateMediaListEntry(ctx context.Context, mediaId int, progress int, status MediaListStatus) error {
 	token, err := GetToken()
 	if err != nil {
 		return fmt.Errorf("authentication required: %w", err)
@@ -60,7 +61,7 @@ func UpdateMediaListEntry(mediaId int, progress int, status MediaListStatus) err
 		return err
 	}
 
-	req, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return err
 	}

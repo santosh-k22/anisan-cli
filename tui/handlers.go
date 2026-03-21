@@ -541,6 +541,11 @@ func (b *statefulBubble) tryLoadMALCache(anime *source.Anime) tea.Cmd {
 	}
 }
 
+type anilistTrackerFetchMsg struct {
+	animes    []*anilist.Anime
+	closestID int
+}
+
 func (b *statefulBubble) fetchAnilist(anime *source.Anime) tea.Cmd {
 	return func() tea.Msg {
 		// Strip "(XX eps)" suffix from name for cleaner search
@@ -557,7 +562,15 @@ func (b *statefulBubble) fetchAnilist(anime *source.Anime) tea.Cmd {
 			b.errorChannel <- err
 		} else {
 			log.Infof("found %s", util.Quantify(len(animes), "anime", "animes"))
-			b.fetchedTrackerAnimesChannel <- animes
+			closest, err := anilist.FindClosest(cleanName)
+			id := -1
+			if err == nil {
+				id = closest.ID
+			}
+			b.fetchedTrackerAnimesChannel <- anilistTrackerFetchMsg{
+				animes:    animes,
+				closestID: id,
+			}
 		}
 		return nil
 	}
@@ -573,6 +586,11 @@ func (b *statefulBubble) waitForAnilist() tea.Cmd {
 			return err
 		}
 	}
+}
+
+type malTrackerFetchMsg struct {
+	animes    []mal.Anime
+	closestID int
 }
 
 func (b *statefulBubble) fetchMALAnime(query string) tea.Cmd {
@@ -591,7 +609,15 @@ func (b *statefulBubble) fetchMALAnime(query string) tea.Cmd {
 			b.errorChannel <- err
 		} else {
 			log.Infof("found %d MAL entries", len(animes))
-			b.fetchedTrackerAnimesChannel <- animes
+			closest, err := mal.FindClosest(cleanName)
+			id := -1
+			if err == nil {
+				id = closest.ID
+			}
+			b.fetchedTrackerAnimesChannel <- malTrackerFetchMsg{
+				animes:    animes,
+				closestID: id,
+			}
 		}
 		return nil
 	}

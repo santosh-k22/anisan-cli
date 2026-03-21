@@ -36,10 +36,8 @@ import (
 
 func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-
 	switch msg := msg.(type) {
 	case provider.ScraperUpdatedMsg:
-		// Scraper definition changes actuate a full provider refresh asynchronously.
 		return b, b.loadProviders()
 	case coverArtMsg:
 		b.coverArtString = string(msg)
@@ -56,6 +54,10 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return b, cmd
+	case *mal.Anime:
+		return b, b.applyManualTrackerUpdate(msg)
+	case *anilist.Anime:
+		return b, b.applyManualTrackerUpdate(msg)
 	case error:
 		b.raiseError(msg)
 	case tea.WindowSizeMsg:
@@ -66,7 +68,6 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return b, tea.Quit
 		}
 
-		// Input Guard: Ignore non-priority keys during asynchronous operations.
 		if b.busy && b.state != readState && b.state != errorState {
 			return b, nil
 		}
@@ -81,10 +82,8 @@ func (b *statefulBubble) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			switch b.state {
 			case searchState:
-				// Reset search input and regression to the previous logical state.
 				b.inputC.SetValue("")
 			case episodesState:
-				// Intercept navigation while in fuzzy-filter mode to prevent state regression.
 				if b.episodesC.FilterState() != list.Unfiltered {
 					b.episodesC, cmd = b.episodesC.Update(msg)
 					return b, cmd
@@ -167,22 +166,16 @@ func (b *statefulBubble) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return b, tea.Quit
 			}
 		}
-	case []*anilist.Anime:
-		closest, err := anilist.FindClosest(b.selectedAnime.Name)
-		id := -1
-		if err == nil {
-			id = closest.ID
-		}
-
-		items := make([]list.Item, len(msg))
+	case anilistTrackerFetchMsg:
+		items := make([]list.Item, len(msg.animes))
 		var marked int
-		for i, al := range msg {
-			if al.ID == id {
+		for i, al := range msg.animes {
+			if al.ID == msg.closestID {
 				marked = i
 			}
 			items[i] = &listItem{
 				internal: al,
-				marked:   al.ID == id,
+				marked:   al.ID == msg.closestID,
 			}
 		}
 
@@ -190,22 +183,16 @@ func (b *statefulBubble) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 		b.newState(trackerSelectState)
 		b.trackerC.Select(marked)
 		return b, tea.Batch(cmd, b.stopLoading())
-	case []mal.Anime:
-		closest, err := mal.FindClosest(b.selectedAnime.Name)
-		id := -1
-		if err == nil {
-			id = closest.ID
-		}
-
-		items := make([]list.Item, len(msg))
+	case malTrackerFetchMsg:
+		items := make([]list.Item, len(msg.animes))
 		var marked int
-		for i := range msg {
-			if msg[i].ID == id {
+		for i := range msg.animes {
+			if msg.animes[i].ID == msg.closestID {
 				marked = i
 			}
 			items[i] = &listItem{
-				internal: &msg[i],
-				marked:   msg[i].ID == id,
+				internal: &msg.animes[i],
+				marked:   msg.animes[i].ID == msg.closestID,
 			}
 		}
 
@@ -223,11 +210,8 @@ func (b *statefulBubble) updateLoading(msg tea.Msg) (tea.Model, tea.Cmd) {
 		b.newState(animesState)
 		b.stopLoading()
 
-		// Kick off concurrent metadata enrichment for the first page of results.
-		// Each fetch delivers metadataPopulatedMsg through the Bubbletea loop so the UI re-renders.
 		cmds = append(cmds, b.batchPopulateMetadata(msg))
 
-		// Eagerly load cover art for the first item so the side pane is populated immediately.
 		if len(msg) > 0 {
 			cmds = append(cmds, b.fetchCoverArt(msg[0]))
 		}
@@ -276,15 +260,11 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		b.selectedAnime = anime
 
-		// Directly initiate episode retrieval for history entries, bypassing the intermediate search results view
-		// since the user has already confirmed the specific media item from their history.
 		b.progressStatus = fmt.Sprintf("Loading episodes for %s...", anime.Name)
 		b.newState(loadingState)
 		return b, tea.Batch(b.getEpisodes(anime), b.waitForEpisodes(), b.startLoading())
 
 	case []*source.Episode:
-		// Episodes loaded from history — transition directly to episodesState.
-		// This skips the redundant single-anime "Anime Results" screen.
 		sort.Slice(msg, func(i, j int) bool {
 			if msg[i].Index != msg[j].Index {
 				return msg[i].Index < msg[j].Index
@@ -316,8 +296,15 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 			epIdx = 0
 		}
 
+		// Auto-advance to the next episode if the current one is completed
+		if epToPlay != nil && selected.WatchedPercentage >= float64(viper.GetInt(key.PlayerCompletionPercentage)) {
+			if epIdx+1 < len(msg) {
+				epToPlay = msg[epIdx+1]
+				epIdx++
+			}
+		}
+
 		if epToPlay != nil {
-			// Explicitly select the episode in the model to ensure the viewport cursor remains consistent upon playback termination.
 			b.episodesC.Select(epIdx)
 
 			// Initiate immediate playback for chronological history resumption.
@@ -370,7 +357,7 @@ func (b *statefulBubble) updateHistory(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case bubblesKey.Matches(msg, b.keymap.openURL):
 			if b.historyC.SelectedItem() != nil {
 				entry := b.historyC.SelectedItem().(*listItem).internal.(*history.SavedEpisode)
-				err := open.Run(entry.URL)
+				err := open.Start(entry.URL)
 				if err != nil {
 					b.raiseError(err)
 				}
@@ -998,8 +985,8 @@ func (b *statefulBubble) updatePostWatch(msg tea.Msg) (tea.Model, tea.Cmd) {
 					b.newState(readState)
 					return b, tea.Batch(b.readEpisode(nextEp), b.startLoading())
 				}
-				// If no next episode, go back to episode list
-				b.previousState()
+				// If no next episode, notify the user instead of silently returning
+				return b, b.postWatchC.NewStatusMessage("Anime completed! No further episodes.")
 
 			case "Replay":
 				if b.currentPlayingEpisode != nil {
@@ -1167,47 +1154,33 @@ func (b *statefulBubble) updateManualID(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return b, nil
 			}
 
-			// Clean anime name exactly like fetchAndSetTracker does implicitly
-			// to guarantee relation cache mapping consistency.
 			cleanName := b.selectedAnime.Name
 			if idx := strings.LastIndex(cleanName, "("); idx != -1 {
 				cleanName = strings.TrimSpace(cleanName[:idx])
 			}
-			backend := viper.GetString("tracker.backend")
-			var msgCmd func() tea.Msg
-			if backend == "mal" {
-				// Fetch the full anime metadata from MAL using the ID.
-				// A hollow struct will not persist properly in the cache.
-				m, err := mal.GetByID(id)
-				if err != nil {
-					b.raiseError(fmt.Errorf("failed to fetch MAL metadata for ID %d: %w", id, err))
-					return b, nil
+
+			b.newState(loadingState)
+			return b, tea.Batch(b.startLoading(), func() tea.Msg {
+				if viper.GetString("tracker.backend") == "mal" {
+					m, err := mal.GetByID(id)
+					if err != nil {
+						return fmt.Errorf("failed to fetch MAL metadata for ID %d: %w", id, err)
+					}
+					if err := mal.SetRelation(cleanName, m); err != nil {
+						return err
+					}
+					return m
 				}
-				err = mal.SetRelation(cleanName, m)
-				if err != nil {
-					b.raiseError(err)
-					return b, nil
-				}
-				msgCmd = func() tea.Msg { return m }
-			} else {
-				// Fetch the full anime metadata from Anilist using the ID.
-				// A hollow struct will not persist properly in the cache.
+
 				al, err := anilist.GetByID(id)
 				if err != nil {
-					b.raiseError(fmt.Errorf("failed to fetch Anilist metadata for ID %d: %w", id, err))
-					return b, nil
+					return fmt.Errorf("failed to fetch Anilist metadata for ID %d: %w", id, err)
 				}
-				err = anilist.SetRelation(cleanName, al)
-				if err != nil {
-					b.raiseError(err)
-					return b, nil
+				if err := anilist.SetRelation(cleanName, al); err != nil {
+					return err
 				}
-				msgCmd = func() tea.Msg { return al }
-			}
-			if b.state == episodesState {
-				return b, tea.Batch(b.episodesC.NewStatusMessage(fmt.Sprintf("Manually linked to ID %d", id)), msgCmd)
-			}
-			return b, tea.Batch(b.animesC.NewStatusMessage(fmt.Sprintf("Manually linked to ID %d", id)), msgCmd)
+				return al
+			})
 
 		case msg.Type == tea.KeyEsc:
 			b.previousState()
@@ -1322,4 +1295,57 @@ func (b *statefulBubble) resolveMalID(animeName string) int {
 	}
 
 	return 0 // Yields 0 if unresolved, causing aniskip to gracefully degrade
+}
+
+func (b *statefulBubble) applyManualTrackerUpdate(trackerData any) tea.Cmd {
+	if b.selectedAnime == nil {
+		return nil
+	}
+
+	meta := &source.Metadata{}
+
+	switch m := trackerData.(type) {
+	case *mal.Anime:
+		meta.Title = m.Title
+		meta.Status = m.Status
+		meta.Episodes = m.NumEpisodes
+		if m.Mean > 0 {
+			meta.Score = int(m.Mean * 10)
+		}
+		if m.MainPicture.Large != "" {
+			meta.Cover.ExtraLarge = m.MainPicture.Large
+		} else if m.MainPicture.Medium != "" {
+			meta.Cover.ExtraLarge = m.MainPicture.Medium
+		}
+	case *anilist.Anime:
+		meta.Title = m.Name()
+		meta.Status = m.Status
+		meta.Score = m.AverageScore
+		meta.Episodes = m.Episodes
+		if m.CoverImage.ExtraLarge != "" {
+			meta.Cover.ExtraLarge = m.CoverImage.ExtraLarge
+		} else if m.CoverImage.Large != "" {
+			meta.Cover.ExtraLarge = m.CoverImage.Large
+		}
+		if m.StartDate.Year != 0 {
+			meta.StartDate = source.Date{Year: m.StartDate.Year, Month: m.StartDate.Month, Day: m.StartDate.Day}
+		}
+		meta.Genres = m.Genres
+	}
+
+	b.selectedAnime.Metadata = *meta
+
+	var cmd tea.Cmd
+	// Force redraw of the active list
+	switch b.state {
+	case animesState:
+		cmd = b.animesC.SetItems(b.animesC.Items())
+	case episodesState:
+		cmd = b.episodesC.SetItems(b.episodesC.Items())
+	case trackerSelectState:
+		cmd = b.trackerC.SetItems(b.trackerC.Items())
+	}
+
+	// Trigger cover art fetch for the new metadata
+	return tea.Batch(cmd, b.fetchCoverArt(b.selectedAnime))
 }

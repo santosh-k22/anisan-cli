@@ -56,13 +56,13 @@ func DeleteToken() error {
 	return keyring.Delete(keyringService, keyringUser)
 }
 
-// GeneratePKCE creates a 128-byte securely randomized Code Challenge for the MyAnimeList OAuth2 PKCE flow.
+// GeneratePKCE creates a securely randomized Code Challenge for the MyAnimeList OAuth2 PKCE flow.
 func GeneratePKCE() (string, error) {
-	b := make([]byte, 128)
+	b := make([]byte, 96) // 96 bytes yields exactly 128 characters when base64url encoded
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
-	// MAL requires a URL-safe base64 string without padding.
+	// MAL requires a URL-safe base64 string without padding (max 128 characters).
 	return strings.TrimRight(base64.URLEncoding.EncodeToString(b), "="), nil
 }
 
@@ -78,6 +78,7 @@ func ExchangeToken(authCode, codeVerifier string) error {
 	data.Set("code", authCode)
 	data.Set("code_verifier", codeVerifier)
 	data.Set("grant_type", "authorization_code")
+	data.Set("redirect_uri", "http://localhost:8080/callback")
 
 	req, err := http.NewRequest(http.MethodPost, "https://myanimelist.net/v1/oauth2/token", strings.NewReader(data.Encode()))
 	if err != nil {

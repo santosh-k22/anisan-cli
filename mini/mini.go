@@ -1,4 +1,3 @@
-// Package mini implements a lightweight, minimalist interface for anime search and playback.
 package mini
 
 import (
@@ -6,7 +5,6 @@ import (
 
 	"github.com/anisan-cli/anisan/source"
 	"github.com/anisan-cli/anisan/util"
-	"github.com/samber/lo"
 )
 
 var (
@@ -43,24 +41,16 @@ func newMini() *mini {
 
 func (m *mini) previousState() {
 	if m.statesHistory.Len() > 0 {
-		m.setState(m.statesHistory.Pop())
+		m.state = m.statesHistory.Pop()
 	}
-}
-
-func (m *mini) setState(s state) {
-	m.state = s
 }
 
 func (m *mini) newState(s state) {
 	if m.state == s {
 		return
 	}
-
-	if !lo.Contains([]state{}, m.state) {
-		m.statesHistory.Push(m.state)
-	}
-
-	m.setState(s)
+	m.statesHistory.Push(m.state)
+	m.state = s
 }
 
 func Run(options *Options) error {

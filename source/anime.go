@@ -1,4 +1,3 @@
-// Package source defines the domain models and interfaces for media discovery and retrieval.
 package source
 
 import (
@@ -24,13 +23,14 @@ import (
 	"github.com/spf13/viper"
 )
 
+var htmlTagRegex = regexp.MustCompile("<.*?>")
+
 type Date struct {
 	Year  int `json:"year"`
 	Month int `json:"month"`
 	Day   int `json:"day"`
 }
 
-// Anime represents a media entity discovered through a provider search.
 type Anime struct {
 	Name   string `json:"name"`
 	URL    string `json:"url"`
@@ -85,12 +85,10 @@ func (a *Anime) String() string {
 	return a.Name
 }
 
-// Name retrieves the primary display title for the anime entity.
 func (a *Anime) Dirname() string {
 	return util.SanitizeFilename(a.Name)
 }
 
-// Path returns the filesystem path for the anime (cache or temp).
 func (a *Anime) Path(temp bool) (string, error) {
 	if temp {
 		if a.cachedTempPath != "" {
@@ -120,7 +118,6 @@ func (a *Anime) GetCover() (string, error) {
 	return "", fmt.Errorf("no cover found")
 }
 
-// BindWithTracker synchronizes the local anime entity with the active tracker backend.
 func (a *Anime) BindWithTracker() error {
 	backend := viper.GetString("tracker.backend")
 
@@ -137,7 +134,6 @@ func (a *Anime) BindWithTracker() error {
 		return nil
 	}
 
-	// Default to Anilist
 	if a.Anilist.IsPresent() {
 		return nil
 	}
@@ -151,7 +147,6 @@ func (a *Anime) BindWithTracker() error {
 	return nil
 }
 
-// PopulateMetadata unifies anime metadata from multiple tracking backends (Jikan, MAL, AniList) to ensure a comprehensive display record.
 func (a *Anime) PopulateMetadata(progress func(string)) error {
 	if a.populated {
 		return nil
@@ -165,8 +160,6 @@ func (a *Anime) PopulateMetadata(progress func(string)) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		// Use Jikan's public search API — no MAL token needed.
-		// MAL auth is only required for tracking episode progress updates.
 		jikanData, err := jikan.SearchByName(ctx, a.Name)
 		if err == nil {
 			a.Metadata.Title = jikanData.EnglishTitle
@@ -218,10 +211,8 @@ func (a *Anime) copyAnilistMetadata(al *anilist.Anime) {
 
 	// ... (rest of the function)
 
-	// Clean summary (remove HTML tags)
 	summary := strings.ReplaceAll(al.Description, "<br>", "\n")
-	re := regexp.MustCompile("<.*?>")
-	a.Metadata.Summary = re.ReplaceAllString(summary, "")
+	a.Metadata.Summary = htmlTagRegex.ReplaceAllString(summary, "")
 
 	a.Metadata.Characters = make([]string, len(al.Characters.Nodes))
 	for i, n := range al.Characters.Nodes {

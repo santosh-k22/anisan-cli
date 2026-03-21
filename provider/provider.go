@@ -1,4 +1,3 @@
-// Package provider manages built-in and custom scraping providers.
 package provider
 
 import (
@@ -12,7 +11,6 @@ import (
 	"github.com/anisan-cli/anisan/where"
 )
 
-// Provider represents a source provider.
 type Provider struct {
 	ID           string
 	Name         string
@@ -25,18 +23,15 @@ func (p *Provider) String() string {
 	return p.Name
 }
 
-// Builtins returns built-in providers.
 func Builtins() []*Provider {
 	return []*Provider{}
 }
 
-// Customs returns all available Lua providers.
 func Customs() []*Provider {
 	providers, _ := CustomProviders()
 	return providers
 }
 
-// Get finds a provider by name.
 func Get(name string) (*Provider, bool) {
 	for _, p := range Customs() {
 		if p.Name == name {
@@ -78,8 +73,6 @@ func CustomProviders() ([]*Provider, error) {
 
 	return providers, nil
 }
-
-// Helpers
 
 func isHeadless(path string) bool {
 	content, err := filesystem.API().ReadFile(path)

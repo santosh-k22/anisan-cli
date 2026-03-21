@@ -1,16 +1,13 @@
-// Package tui provides the primary terminal user interface implementation.
 package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-// Options encapsulates the runtime configuration for the terminal user interface.
 type Options struct {
 	Continue bool
 }
 
-// Run initializes and executes the primary Bubble Tea application loop.
 func Run(options *Options) error {
 	bubble := newBubble(options)
 

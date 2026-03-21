@@ -1,7 +1,5 @@
-// Package source defines the domain models and interfaces for media discovery and retrieval.
 package source
 
-// Video represents a streamable video resource.
 type Video struct {
 	// Direct URL to the stream/file.
 	URL string `json:"url"`
@@ -15,7 +13,6 @@ type Video struct {
 	Index uint16 `json:"index"`
 }
 
-// String returns the quality or URL for display.
 func (v *Video) String() string {
 	if v.Quality != "" {
 		return v.Quality

@@ -37,7 +37,6 @@ func GetByID(id int) (*Anime, error) {
 		return anime.MustGet(), nil
 	}
 
-	// Prepare request body for GraphQL query.
 	log.Infof("Searching anilist for anime with id: %d", id)
 	body := map[string]interface{}{
 		"query": searchByIDQuery,
@@ -53,7 +52,6 @@ func GetByID(id int) (*Anime, error) {
 		return nil, err
 	}
 
-	// Create and send the HTTP request to the Anilist API.
 	log.Info("Sending request to Anilist")
 	req, err := http.NewRequest(http.MethodPost, "https://graphql.anilist.co", bytes.NewBuffer(jsonBody))
 	if err != nil {
@@ -69,6 +67,7 @@ func GetByID(id int) (*Anime, error) {
 		log.Error(err)
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Error("Anilist returned status code " + strconv.Itoa(resp.StatusCode))
@@ -144,6 +143,7 @@ func SearchByName(name string) ([]*Anime, error) {
 		_ = failCacher.Set(name, true)
 		return nil, err
 	}
+	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		log.Error("Anilist returned status code " + strconv.Itoa(resp.StatusCode))

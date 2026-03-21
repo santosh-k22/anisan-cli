@@ -1,4 +1,3 @@
-// Package network provides a pre-configured, optimized HTTP client for concurrent provider communication.
 package network
 
 import (
@@ -6,8 +5,6 @@ import (
 	"time"
 )
 
-// Client is the singleton HTTP client shared across the application for efficient resource utilization.
-// It is configured with increased concurrency limits and reasonable timeouts tailored for scraping workflows.
 var Client = &http.Client{
 	Timeout:   time.Minute,
 	Transport: newTransport(),

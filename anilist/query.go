@@ -70,7 +70,7 @@ averageScore
 var searchByNameQuery = fmt.Sprintf(`
 query ($query: String) {
 	Page (page: 1, perPage: 30) {
-		media (search: $query, type: ANIME) {
+		media (search: $query, type: ANIME, sort: [SEARCH_MATCH, POPULARITY_DESC]) {
 			%s
 		}
 	}

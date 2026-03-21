@@ -3,6 +3,7 @@ package mal
 
 import (
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/anisan-cli/anisan/filesystem"
@@ -20,10 +21,14 @@ type cacheData[K comparable, T any] struct {
 type cacher[K comparable, T any] struct {
 	internal   *gache.Cache[*cacheData[K, T]]
 	keyWrapper func(K) K
+	mu         sync.Mutex
 }
 
 // Get retrieves a value from the cache associated with the specified key.
 func (c *cacher[K, T]) Get(key K) mo.Option[T] {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	data, expired, err := c.internal.Get()
 	if err != nil || expired || data == nil {
 		return mo.None[T]()
@@ -39,6 +44,9 @@ func (c *cacher[K, T]) Get(key K) mo.Option[T] {
 
 // Set persists a key-value pair to the cache.
 func (c *cacher[K, T]) Set(key K, t T) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	data, expired, err := c.internal.Get()
 	if err != nil {
 		return err
@@ -56,6 +64,9 @@ func (c *cacher[K, T]) Set(key K, t T) error {
 
 // Delete removes the entry associated with the specified key from the cache.
 func (c *cacher[K, T]) Delete(key K) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	data, expired, err := c.internal.Get()
 	if err != nil {
 		return err

@@ -63,8 +63,6 @@ func (m *MPV) Play(rawURL string, title string, headers map[string]string) error
 		headerString = hBuilder.String()
 	}
 
-	// Generate a random socket path using os.TempDir() for cross-platform support
-	// (macOS $TMPDIR is /var/folders/... not /tmp/)
 	if m.socketPath == "" {
 		randomBytes := make([]byte, 4)
 		if _, err := rand.Read(randomBytes); err != nil {
@@ -182,31 +180,24 @@ func (m *MPV) GetPercentWatched() (float64, error) {
 	return (pos / dur) * 100, nil
 }
 
-// GetPausedStatus returns whether playback is currently paused.
 func (m *MPV) GetPausedStatus() (bool, error) {
 	data, err := m.sendCommand([]interface{}{"get_property", "pause"})
 	if err != nil {
 		return false, err
 	}
-	paused, ok := data.(bool)
-	if !ok {
-		return false, nil
-	}
+	paused, _ := data.(bool)
 	return paused, nil
 }
 
-// HasActivePlayback checks if mpv currently has active media playing.
-// Returns false (not error) for "property unavailable" — nothing loaded.
 func (m *MPV) HasActivePlayback() (bool, error) {
-	data, err := m.sendCommand([]interface{}{"get_property", "time-pos"})
+	_, err := m.sendCommand([]interface{}{"get_property", "time-pos"})
 	if err != nil {
-		// "property unavailable" means nothing is loaded — valid state
 		if strings.Contains(err.Error(), "property unavailable") {
 			return false, nil
 		}
 		return false, err
 	}
-	return data != nil, nil
+	return true, nil
 }
 
 // Seek moves playback to the given absolute position in seconds.
@@ -263,12 +254,7 @@ func (m *MPV) StartIPCTicker(callback func(timePos int, duration int)) {
 					continue
 				}
 
-				dur, err := m.GetDuration()
-				if err != nil {
-					// Duration might be unknown for streams, just send 0 or keep polling
-					dur = 0
-				}
-
+				dur, _ := m.GetDuration()
 				callback(int(pos), int(dur))
 			}
 		}

@@ -1,4 +1,3 @@
-// Package cmd implements the command-line interface for anisan-cli.
 package cmd
 
 import (
@@ -14,9 +13,7 @@ import (
 	"github.com/anisan-cli/anisan/provider"
 	"github.com/anisan-cli/anisan/style"
 	"github.com/anisan-cli/anisan/tui"
-	"github.com/anisan-cli/anisan/util"
 	"github.com/anisan-cli/anisan/version"
-	"github.com/anisan-cli/anisan/where"
 	cc "github.com/ivanpirog/coloredcobra"
 	"github.com/samber/lo"
 	"github.com/spf13/cobra"
@@ -59,13 +56,8 @@ func init() {
 		version.Notify()
 	})
 
-	// Initialize cleanup of localized temporary files on application startup.
-	go func() {
-		_ = util.Delete(where.Temp())
-	}()
 }
 
-// rootCmd defines the entry point for the anisan-cli application.
 var rootCmd = &cobra.Command{
 	Use:   constant.Anisan,
 	Short: "A minimalist command-line interface for anime discovery and playback",
@@ -86,7 +78,6 @@ var rootCmd = &cobra.Command{
 	},
 }
 
-// Execute initializes child command routing and processes the CLI entry point.
 func Execute() {
 	if viper.GetBool(key.CliColored) {
 		cc.Init(&cc.Config{

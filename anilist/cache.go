@@ -26,8 +26,8 @@ type cacher[K comparable, T any] struct {
 
 // Get retrieves a value from the cache associated with the specified key.
 func (c *cacher[K, T]) Get(key K) mo.Option[T] {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
 
 	data, expired, err := c.internal.Get()
 	if err != nil || expired || data == nil {

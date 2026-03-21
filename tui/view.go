@@ -19,7 +19,6 @@ var (
 )
 
 func (b *statefulBubble) View() string {
-	// View executes the state-driven dispatcher to render the appropriate TUI component layer.
 	var output string
 
 	switch b.state {
@@ -49,7 +48,6 @@ func (b *statefulBubble) View() string {
 		output = "Unknown state"
 	}
 
-	// Flush residual Kitty graphics when transitioning to states without cover art.
 	if b.coverArtString == "" && b.imageMode == render.ModeKitty {
 		output += "\033_Ga=d,d=A\033\\"
 	}
